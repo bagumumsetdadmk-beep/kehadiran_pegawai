@@ -15,7 +15,8 @@ import {
   FileSpreadsheet,
   ChevronLeft,
   ChevronRight,
-  Fingerprint
+  Fingerprint,
+  Briefcase
 } from 'lucide-react';
 import { exportEmployeesToExcel, downloadEmployeeTemplate } from '../utils/exportUtils';
 
@@ -57,6 +58,9 @@ const AdminView: React.FC<Props> = ({
     (currentPage - 1) * itemsPerPage,
     currentPage * itemsPerPage
   );
+
+  // Filter list pegawai yang berstatus sebagai Pimpinan untuk dropdown
+  const managerList = employees.filter(e => e.isManager);
 
   const handleOpenAddModal = () => {
     setEditingEmployee(null);
@@ -236,7 +240,7 @@ const AdminView: React.FC<Props> = ({
               <tr className="bg-slate-50 border-b border-slate-100 text-slate-400 text-[10px] uppercase tracking-widest font-black">
                 <th className="px-8 py-5">No</th>
                 <th className="px-8 py-5">Pegawai</th>
-                <th className="px-8 py-5 text-center">NIP / ID Mesin</th>
+                <th className="px-8 py-5 text-center">NIP / PIN Mesin</th>
                 <th className="px-8 py-5">Subbagian</th>
                 <th className="px-8 py-5">Jabatan</th>
                 <th className="px-8 py-5 text-right">Aksi</th>
@@ -269,7 +273,7 @@ const AdminView: React.FC<Props> = ({
                         <span className="text-sm font-mono text-slate-500">{emp.nip}</span>
                         {emp.fingerprintId && (
                           <span className="text-[10px] bg-slate-100 text-slate-500 px-2 py-0.5 rounded-md mt-1 flex items-center gap-1">
-                            <Fingerprint size={10} /> ID: {emp.fingerprintId}
+                            <Fingerprint size={10} /> PIN: {emp.fingerprintId}
                           </span>
                         )}
                       </div>
@@ -281,7 +285,7 @@ const AdminView: React.FC<Props> = ({
                     </td>
                     <td className="px-8 py-5 text-sm text-slate-600 font-medium">
                       {emp.role}
-                      {emp.isManager && <span className="ml-2 text-[9px] bg-indigo-50 text-indigo-600 px-1.5 py-0.5 rounded font-black uppercase">Manager</span>}
+                      {emp.isManager && <span className="ml-2 text-[9px] bg-indigo-50 text-indigo-600 px-1.5 py-0.5 rounded font-black uppercase">Pimpinan</span>}
                     </td>
                     <td className="px-8 py-5 text-sm">
                       <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -379,20 +383,32 @@ const AdminView: React.FC<Props> = ({
                   </select>
                 </div>
                 <div className="space-y-1.5">
-                   <label className="text-xs font-bold text-slate-500 uppercase ml-1 flex items-center gap-1"><Fingerprint size={12} /> ID Mesin (Fingerprint ID)</label>
+                   <label className="text-xs font-bold text-slate-500 uppercase ml-1 flex items-center gap-1"><Fingerprint size={12} /> ID User pada Mesin (PIN/UID)</label>
                    <input name="fingerprintId" defaultValue={editingEmployee?.fingerprintId || ''} placeholder="Contoh: 101" className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:ring-2 focus:ring-indigo-500 outline-none font-mono" />
+                   <p className="text-[9px] text-slate-400">Nomor User ID yang terdaftar di dalam mesin absensi.</p>
                 </div>
               </div>
               
               <div className="space-y-1.5">
-                <label className="text-xs font-bold text-slate-500 uppercase ml-1">ID Manager (Atasan)</label>
-                <input name="managerId" defaultValue={editingEmployee?.managerId || ''} placeholder="Kosongkan jika Atasan" className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:ring-2 focus:ring-indigo-500 outline-none" />
+                <label className="text-xs font-bold text-slate-500 uppercase ml-1 flex items-center gap-1"><Briefcase size={12} /> Atasan Langsung (Pimpinan)</label>
+                <select 
+                  name="managerId" 
+                  defaultValue={editingEmployee?.managerId || ''} 
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
+                >
+                  <option value="">-- Tidak Ada / Pimpinan Tertinggi --</option>
+                  {managerList.map(mgr => (
+                    <option key={mgr.id} value={mgr.id}>
+                      {mgr.name} ({mgr.role})
+                    </option>
+                  ))}
+                </select>
               </div>
 
               <div className="flex items-center gap-6 pt-2">
                 <label className="flex items-center gap-2 cursor-pointer group">
                   <input type="checkbox" name="isManager" defaultChecked={editingEmployee?.isManager} className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500 border-slate-300" />
-                  <span className="text-xs font-bold text-slate-600 group-hover:text-indigo-600 transition-colors">Set sebagai Manager</span>
+                  <span className="text-xs font-bold text-slate-600 group-hover:text-indigo-600 transition-colors">Set sebagai Pimpinan</span>
                 </label>
                 <label className="flex items-center gap-2 cursor-pointer group">
                   <input type="checkbox" name="isAdmin" defaultChecked={editingEmployee?.isAdmin} className="w-4 h-4 rounded text-rose-600 focus:ring-rose-500 border-slate-300" />
