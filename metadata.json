@@ -1,0 +1,7 @@
+{
+  "name": "AbsensiPintar - Sistem Kehadiran Pegawai",
+  "description": "Aplikasi manajemen kehadiran pegawai yang terintegrasi dengan data fingerprint, fitur pengajuan izin, dan pemantauan berdasarkan pimpinan.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
