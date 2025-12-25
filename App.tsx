@@ -12,7 +12,9 @@ import {
   ClipboardList,
   History,
   PlaneTakeoff,
-  CalendarDays
+  CalendarDays,
+  Menu,
+  X
 } from 'lucide-react';
 import { MOCK_EMPLOYEES, MOCK_ATTENDANCE, MOCK_PERMISSIONS, MOCK_SCHEDULES, MOCK_MACHINE } from './constants';
 import { AttendanceRecord, PermissionRequest, PermissionStatus, Employee, Holiday, WorkSchedule, FingerprintMachine, OrganizationProfile } from './types';
@@ -49,6 +51,9 @@ const App: React.FC = () => {
     logoUrl: null
   });
   const [selectedDateForPermission, setSelectedDateForPermission] = useState<string | null>(null);
+  
+  // State untuk Mobile Menu
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   useEffect(() => {
     const link: HTMLLinkElement = document.querySelector("link[rel*='icon']") || document.createElement('link');
@@ -211,6 +216,13 @@ const App: React.FC = () => {
   
   const isManager = currentUser?.isManager || false;
   const isAdmin = currentUser?.isAdmin || false;
+
+  // NOTIFICATION LOGIC:
+  // Hitung jumlah izin yang berstatus PENDING (Menunggu Persetujuan)
+  // Hanya relevan jika user adalah Manager dan izin tersebut ditujukan kepadanya
+  const pendingPermissionsCount = isManager 
+    ? permissions.filter(p => p.managerId === currentUser?.id && p.status === PermissionStatus.PENDING).length
+    : 0;
 
   const handleLogin = (user: Employee) => {
     setCurrentUser(user);
@@ -419,47 +431,77 @@ const App: React.FC = () => {
     });
   };
 
+  // Helper untuk mengganti View dan menutup menu mobile
+  const handleMenuClick = (view: View) => {
+    setActiveView(view);
+    setIsMobileMenuOpen(false);
+  };
+
   if (!currentUser) {
     return <Login onLogin={handleLogin} logo={opdProfile.logoUrl} employees={employees} />;
   }
 
   return (
     <div className="flex h-screen overflow-hidden bg-slate-50">
-      <aside className={`w-72 ${isAdmin ? 'bg-slate-950' : 'bg-slate-900'} text-white flex flex-col hidden md:flex shadow-2xl z-20`}>
-        <div className="p-8 flex items-center gap-3">
-          {opdProfile.logoUrl ? (
-            <img src={opdProfile.logoUrl} alt="Logo" className="w-10 h-10 rounded-xl object-contain bg-white/10 p-1" />
-          ) : (
-            <div className={`w-10 h-10 ${isAdmin ? 'bg-indigo-500' : 'bg-indigo-600'} rounded-xl flex items-center justify-center font-bold text-xl shadow-lg`}>
-              {isAdmin ? 'AD' : 'AP'}
-            </div>
-          )}
-          <span className="font-bold text-lg tracking-tight">AbsensiPintar</span>
+      
+      {/* Mobile Overlay Backdrop */}
+      {isMobileMenuOpen && (
+        <div 
+          className="fixed inset-0 bg-black/50 z-40 md:hidden backdrop-blur-sm transition-opacity"
+          onClick={() => setIsMobileMenuOpen(false)}
+        />
+      )}
+
+      {/* Sidebar - Responsive: Fixed on mobile, Static on Desktop */}
+      <aside className={`
+        fixed md:static inset-y-0 left-0 z-50
+        w-72 flex flex-col shadow-2xl transition-transform duration-300 ease-in-out
+        ${isAdmin ? 'bg-slate-950' : 'bg-slate-900'} text-white
+        ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0
+      `}>
+        <div className="p-8 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            {opdProfile.logoUrl ? (
+              <img src={opdProfile.logoUrl} alt="Logo" className="w-10 h-10 rounded-xl object-contain bg-white/10 p-1" />
+            ) : (
+              <div className={`w-10 h-10 ${isAdmin ? 'bg-indigo-500' : 'bg-indigo-600'} rounded-xl flex items-center justify-center font-bold text-xl shadow-lg`}>
+                {isAdmin ? 'AD' : 'AP'}
+              </div>
+            )}
+            <span className="font-bold text-lg tracking-tight">AbsensiPintar</span>
+          </div>
+          {/* Close Button Mobile */}
+          <button 
+            onClick={() => setIsMobileMenuOpen(false)}
+            className="md:hidden text-slate-400 hover:text-white p-1 rounded-lg hover:bg-white/10 transition-colors"
+          >
+            <X size={24} />
+          </button>
         </div>
 
-        <nav className="flex-1 px-4 space-y-1.5">
+        <nav className="flex-1 px-4 space-y-1.5 overflow-y-auto">
           {!isAdmin && !isManager && (
             <>
-              <SidebarLink icon={<LayoutDashboard size={18} />} label="Dashboard Saya" active={activeView === 'dashboard'} onClick={() => setActiveView('dashboard')} />
-              <SidebarLink icon={<CalendarCheck size={18} />} label="Data Kehadiran" active={activeView === 'attendance'} onClick={() => setActiveView('attendance')} />
-              <SidebarLink icon={<History size={18} />} label="Daftar Izin Saya" active={activeView === 'permission_history'} onClick={() => setActiveView('permission_history')} />
+              <SidebarLink icon={<LayoutDashboard size={18} />} label="Dashboard Saya" active={activeView === 'dashboard'} onClick={() => handleMenuClick('dashboard')} />
+              <SidebarLink icon={<CalendarCheck size={18} />} label="Data Kehadiran" active={activeView === 'attendance'} onClick={() => handleMenuClick('attendance')} />
+              <SidebarLink icon={<History size={18} />} label="Daftar Izin Saya" active={activeView === 'permission_history'} onClick={() => handleMenuClick('permission_history')} />
             </>
           )}
 
           {isManager && (
             <>
-              <SidebarLink icon={<LayoutDashboard size={18} />} label="Dashboard Pimpinan" active={activeView === 'dashboard'} onClick={() => setActiveView('dashboard')} />
-              <SidebarLink icon={<Users size={18} />} label="Monitoring Staf" active={activeView === 'manager_attendance'} onClick={() => setActiveView('manager_attendance')} />
-              <SidebarLink icon={<ClipboardList size={18} />} label="Daftar Permohonan" active={activeView === 'manager_permissions'} onClick={() => setActiveView('manager_permissions')} />
+              <SidebarLink icon={<LayoutDashboard size={18} />} label="Dashboard Pimpinan" active={activeView === 'dashboard'} onClick={() => handleMenuClick('dashboard')} />
+              <SidebarLink icon={<Users size={18} />} label="Monitoring Staf" active={activeView === 'manager_attendance'} onClick={() => handleMenuClick('manager_attendance')} />
+              <SidebarLink icon={<ClipboardList size={18} />} label="Daftar Permohonan" active={activeView === 'manager_permissions'} onClick={() => handleMenuClick('manager_permissions')} />
             </>
           )}
 
           {isAdmin && (
             <>
-              <SidebarLink icon={<LayoutDashboard size={18} />} label="Statistik Utama" active={activeView === 'dashboard'} onClick={() => setActiveView('dashboard')} />
-              <SidebarLink icon={<Users size={18} />} label="Kelola Pegawai" active={activeView === 'admin_pegawai'} onClick={() => setActiveView('admin_pegawai')} />
-              <SidebarLink icon={<CalendarDays size={18} />} label="Kelola Hari Libur" active={activeView === 'admin_holidays'} onClick={() => setActiveView('admin_holidays')} />
-              <SidebarLink icon={<Settings size={18} />} label="Sistem & Konfigurasi" active={activeView === 'admin_logs'} onClick={() => setActiveView('admin_logs')} />
+              <SidebarLink icon={<LayoutDashboard size={18} />} label="Statistik Utama" active={activeView === 'dashboard'} onClick={() => handleMenuClick('dashboard')} />
+              <SidebarLink icon={<Users size={18} />} label="Kelola Pegawai" active={activeView === 'admin_pegawai'} onClick={() => handleMenuClick('admin_pegawai')} />
+              <SidebarLink icon={<CalendarDays size={18} />} label="Kelola Hari Libur" active={activeView === 'admin_holidays'} onClick={() => handleMenuClick('admin_holidays')} />
+              <SidebarLink icon={<Settings size={18} />} label="Sistem & Konfigurasi" active={activeView === 'admin_logs'} onClick={() => handleMenuClick('admin_logs')} />
             </>
           )}
         </nav>
@@ -480,34 +522,58 @@ const App: React.FC = () => {
         </div>
       </aside>
 
-      <main className="flex-1 flex flex-col overflow-hidden">
-        <header className="h-20 bg-white border-b border-slate-200 flex items-center justify-between px-10 sticky top-0 z-10">
-          <div>
-            <h2 className="text-xl font-extrabold text-slate-800">
-              {activeView === 'dashboard' && (isAdmin ? 'Dashboard Administrator' : 'Dashboard Informasi')}
-              {activeView === 'attendance' && 'Informasi Kehadiran'}
-              {activeView === 'permission_form' && 'Formulir Pengajuan Izin'}
-              {activeView === 'permission_history' && 'Riwayat Pengajuan Izin'}
-              {activeView === 'manager_attendance' && 'Pantau Kehadiran Tim'}
-              {activeView === 'manager_permissions' && 'Validasi Permohonan Izin'}
-              {activeView === 'admin_pegawai' && 'Manajemen Database'}
-              {activeView === 'admin_holidays' && 'Manajemen Hari Libur'}
-              {activeView === 'admin_logs' && 'Sistem & Laporan'}
-            </h2>
-            <p className="text-[10px] font-bold text-indigo-600 uppercase tracking-widest">
-              {isAdmin ? 'Mode Administrator' : `${currentUser.subBagian} • ${currentUser.role}`}
-            </p>
+      <main className="flex-1 flex flex-col overflow-hidden relative w-full">
+        <header className="h-20 bg-white border-b border-slate-200 flex items-center justify-between px-6 md:px-10 sticky top-0 z-10 shrink-0">
+          <div className="flex items-center gap-4">
+            {/* Hamburger Button (Mobile Only) */}
+            <button 
+              onClick={() => setIsMobileMenuOpen(true)}
+              className="md:hidden text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 p-2 rounded-xl transition-all"
+            >
+              <Menu size={24} />
+            </button>
+
+            <div>
+              <h2 className="text-lg md:text-xl font-extrabold text-slate-800 line-clamp-1">
+                {activeView === 'dashboard' && (isAdmin ? 'Dashboard Administrator' : 'Dashboard Informasi')}
+                {activeView === 'attendance' && 'Informasi Kehadiran'}
+                {activeView === 'permission_form' && 'Formulir Pengajuan Izin'}
+                {activeView === 'permission_history' && 'Riwayat Pengajuan Izin'}
+                {activeView === 'manager_attendance' && 'Pantau Kehadiran Tim'}
+                {activeView === 'manager_permissions' && 'Validasi Permohonan Izin'}
+                {activeView === 'admin_pegawai' && 'Manajemen Database'}
+                {activeView === 'admin_holidays' && 'Manajemen Hari Libur'}
+                {activeView === 'admin_logs' && 'Sistem & Laporan'}
+              </h2>
+              <p className="text-[10px] font-bold text-indigo-600 uppercase tracking-widest hidden md:block">
+                {isAdmin ? 'Mode Administrator' : `${currentUser.subBagian} • ${currentUser.role}`}
+              </p>
+            </div>
           </div>
           <div className="flex items-center gap-4">
-            <div className="h-10 w-[1px] bg-slate-200 mx-2"></div>
-            <button className="p-2.5 text-slate-400 hover:bg-slate-100 rounded-xl transition-colors relative">
+            <div className="h-10 w-[1px] bg-slate-200 mx-2 hidden md:block"></div>
+            
+            {/* Notification Bell Logic */}
+            <button 
+              onClick={() => {
+                if(isManager && pendingPermissionsCount > 0) {
+                  handleMenuClick('manager_permissions');
+                }
+              }}
+              className="p-2.5 text-slate-400 hover:bg-slate-100 rounded-xl transition-colors relative"
+              title={isManager ? "Permohonan Izin Menunggu" : "Notifikasi"}
+            >
               <Bell size={20} />
-              <span className="absolute top-2 right-2 w-2 h-2 bg-rose-500 rounded-full border-2 border-white"></span>
+              {pendingPermissionsCount > 0 && (
+                <span className="absolute top-1.5 right-1.5 w-4 h-4 bg-rose-500 rounded-full border-2 border-white flex items-center justify-center text-[9px] font-bold text-white shadow-sm">
+                  {pendingPermissionsCount > 9 ? '9+' : pendingPermissionsCount}
+                </span>
+              )}
             </button>
           </div>
         </header>
 
-        <div className="flex-1 overflow-y-auto p-10 bg-slate-50">
+        <div className="flex-1 overflow-y-auto p-4 md:p-10 bg-slate-50 w-full">
           <div className="max-w-7xl mx-auto">
             {activeView === 'dashboard' && (
               <Dashboard 
