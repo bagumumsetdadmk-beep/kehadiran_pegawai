@@ -107,6 +107,7 @@ const EmployeeAttendanceView: React.FC<Props> = ({ attendance, permissions, holi
       <AttendanceTable 
         attendance={fullMonthAttendance} 
         permissions={permissions}
+        holidays={holidays}
         onJustifyLate={onJustifyLate} 
       />
     </div>

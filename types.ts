@@ -59,7 +59,7 @@ export interface PermissionRequest {
   employeeId: string;
   employeeName: string;
   managerId: string;
-  type: 'Sakit' | 'Terlambat' | 'Alasan Penting';
+  type: 'Sakit' | 'Terlambat' | 'Alasan Penting' | 'Cuti';
   startDate: string;
   endDate: string;
   reason: string;

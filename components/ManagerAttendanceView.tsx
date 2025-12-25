@@ -137,7 +137,7 @@ const ManagerAttendanceView: React.FC<Props> = ({ managerId, employees, attendan
         </div>
       </div>
 
-      <AttendanceTable attendance={displayAttendance} permissions={permissions} />
+      <AttendanceTable attendance={displayAttendance} permissions={permissions} holidays={holidays} />
     </div>
   );
 };

@@ -1,15 +1,16 @@
 
 import React from 'react';
-import { AttendanceRecord, PermissionRequest, PermissionStatus } from '../types';
+import { AttendanceRecord, PermissionRequest, PermissionStatus, Holiday } from '../types';
 import { CheckCircle2, Clock, MessageSquareQuote, CalendarCheck, ShieldQuestion, ShieldAlert, ShieldCheck, Coffee, PlaneTakeoff, Briefcase } from 'lucide-react';
 
 interface Props {
   attendance: AttendanceRecord[];
   permissions?: PermissionRequest[];
+  holidays?: Holiday[]; // Menambahkan prop holidays
   onJustifyLate?: (date: string) => void;
 }
 
-const AttendanceTable: React.FC<Props> = ({ attendance, permissions = [], onJustifyLate }) => {
+const AttendanceTable: React.FC<Props> = ({ attendance, permissions = [], holidays = [], onJustifyLate }) => {
   return (
     <div className="bg-white rounded-3xl shadow-sm border border-slate-200 overflow-hidden">
       <div className="p-8 border-b border-slate-100 flex items-center justify-between bg-slate-50/30">
@@ -21,8 +22,7 @@ const AttendanceTable: React.FC<Props> = ({ attendance, permissions = [], onJust
           <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-emerald-500"></div> Normal</div>
           <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-blue-600"></div> Lembur/Tugas</div>
           <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-rose-500"></div> Terlambat</div>
-          <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-rose-600"></div> Tgl Merah</div>
-          <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-slate-300"></div> Akhir Pekan</div>
+          <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-red-600"></div> Tgl Merah/Libur</div>
         </div>
       </div>
       <div className="overflow-x-auto">
@@ -52,35 +52,37 @@ const AttendanceTable: React.FC<Props> = ({ attendance, permissions = [], onJust
               attendance.map((row, idx) => {
                 const permission = permissions.find(p => p.startDate === row.date);
                 
+                // Cek apakah tanggal ini ada di daftar holidays
+                const holidayData = holidays.find(h => h.date === row.date);
+
                 // Deteksi Hari Libur / Weekend
                 const isWeekend = row.day === 'Sabtu' || row.day === 'Minggu';
-                const isHoliday = !isWeekend && (row.remarks === 'Belum Ada Data' ? false : (row.remarks.includes('Libur') || row.remarks.includes('Cuti Bersama')));
+                
+                // isHoliday true jika: Ada di daftar holidays ATAU remarks mengandung kata kunci libur (fallback)
+                const isHoliday = !!holidayData || (!isWeekend && (row.remarks === 'Belum Ada Data' ? false : (row.remarks.includes('Libur') || row.remarks.includes('Cuti Bersama'))));
 
                 // Cek apakah HADIR di hari libur (Lembur)
                 const isPresentOnHoliday = (isWeekend || isHoliday) && row.fingerprintIn;
+                
+                // Definisi "Tanggal Merah" = Libur Nasional ATAU Sabtu/Minggu
+                const isRedDay = isHoliday || isWeekend;
 
                 // Tentukan warna background baris
-                // HARI LIBUR: Tetap Putih (hover sedikit abu) agar teks Merah terlihat kontras
-                // WEEKEND: Sedikit abu-abu
                 let rowBackgroundClass = 'hover:bg-slate-50/80'; 
-                if (isWeekend) {
-                  rowBackgroundClass = 'bg-slate-50/50'; 
-                }
 
                 return (
                   <tr key={row.id} className={`${rowBackgroundClass} transition-colors group border-b border-slate-100 last:border-0`}>
                     <td className="px-8 py-6 text-sm font-mono text-slate-400">{(idx + 1).toString().padStart(2, '0')}</td>
                     
-                    {/* Kolom Hari & Tanggal */}
+                    {/* Kolom Hari & Tanggal (MERAH jika Libur/Weekend) */}
                     <td className="px-8 py-6">
                       <div className="flex flex-col">
                         <span className={`text-sm font-bold ${
-                          isHoliday ? 'text-rose-600' : // Merah Tegas untuk Hari Libur
-                          isWeekend ? 'text-slate-500' : 'text-slate-700'
+                          isRedDay ? 'text-red-600' : 'text-slate-700'
                         }`}>
                           {row.day}
                         </span>
-                        <span className={`text-xs ${isHoliday ? 'text-rose-400' : 'text-slate-400'}`}>{row.date}</span>
+                        <span className={`text-xs ${isRedDay ? 'text-rose-500' : 'text-slate-400'}`}>{row.date}</span>
                       </div>
                     </td>
 
@@ -89,17 +91,17 @@ const AttendanceTable: React.FC<Props> = ({ attendance, permissions = [], onJust
                       {isPresentOnHoliday ? (
                         <span className="text-[10px] bg-blue-50 text-blue-600 px-2 py-1 rounded font-bold border border-blue-100">EXTRA</span>
                       ) : (
-                        <span className={isHoliday ? 'text-rose-300 font-medium' : ''}>{row.shiftIn}</span>
+                        <span className={isRedDay ? 'text-rose-300 font-medium' : ''}>{row.shiftIn}</span>
                       )}
                     </td>
 
-                    {/* Kolom Finger In (Highlight Biru jika masuk saat libur) */}
+                    {/* Kolom Finger In */}
                     <td className="px-8 py-6 text-center">
                       <span className={`text-sm font-black ${
                         isPresentOnHoliday ? 'text-blue-600' : // Biru jika lembur
                         row.isLate ? 'text-rose-600' : 
                         row.fingerprintIn ? 'text-emerald-600' : 
-                        isHoliday ? 'text-rose-300' : 'text-slate-300' 
+                        isRedDay ? 'text-rose-300' : 'text-slate-300' 
                       }`}>
                         {row.fingerprintIn || '--:--'}
                       </span>
@@ -110,7 +112,7 @@ const AttendanceTable: React.FC<Props> = ({ attendance, permissions = [], onJust
                       {isPresentOnHoliday ? (
                          <span className="text-[10px] bg-blue-50 text-blue-600 px-2 py-1 rounded font-bold border border-blue-100">TASK</span>
                       ) : (
-                         <span className={isHoliday ? 'text-rose-300 font-medium' : ''}>{row.shiftOut}</span>
+                         <span className={isRedDay ? 'text-rose-300 font-medium' : ''}>{row.shiftOut}</span>
                       )}
                     </td>
 
@@ -119,7 +121,7 @@ const AttendanceTable: React.FC<Props> = ({ attendance, permissions = [], onJust
                       <span className={`${
                          isPresentOnHoliday && row.fingerprintOut ? 'text-blue-600' :
                          row.fingerprintOut ? 'text-slate-700' : 
-                         isHoliday ? 'text-rose-300' : 'text-slate-300'
+                         isRedDay ? 'text-rose-300' : 'text-slate-300'
                       }`}>
                         {row.fingerprintOut || '--:--'}
                       </span>
@@ -133,10 +135,8 @@ const AttendanceTable: React.FC<Props> = ({ attendance, permissions = [], onJust
                             ? 'bg-blue-600 text-white shadow-md shadow-blue-200' // Biru solid mencolok untuk Lembur
                             : row.isLate 
                             ? 'bg-rose-50 text-rose-700 border border-rose-100' 
-                            : isHoliday
-                            ? 'bg-white text-rose-600 border border-rose-200 shadow-sm' // Background Putih, Text Merah (Sesuai Request)
-                            : isWeekend
-                            ? 'bg-slate-100 text-slate-500 border border-slate-200'
+                            : isRedDay
+                            ? 'bg-white text-red-600 border border-red-100 shadow-sm' // MERAH untuk Weekend & Libur
                             : row.fingerprintIn
                             ? 'bg-emerald-50 text-emerald-700 border border-emerald-100'
                             : 'bg-slate-50 text-slate-400 border border-slate-100'
@@ -147,7 +147,8 @@ const AttendanceTable: React.FC<Props> = ({ attendance, permissions = [], onJust
                            isWeekend ? <Coffee size={12} /> : 
                            <CheckCircle2 size={12} />}
                           
-                          {isPresentOnHoliday ? 'Hadir (Lembur)' : row.remarks}
+                          {/* Priority Display: Holiday Name -> Remarks */}
+                          {isPresentOnHoliday ? 'Hadir (Lembur)' : (holidayData ? holidayData.name : row.remarks)}
                         </div>
                         
                         {/* Tombol Justify (Izin) */}
