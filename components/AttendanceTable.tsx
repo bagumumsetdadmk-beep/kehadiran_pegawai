@@ -1,7 +1,7 @@
 
 import React from 'react';
 import { AttendanceRecord, PermissionRequest, PermissionStatus } from '../types';
-import { AlertTriangle, CheckCircle2, Clock, MessageSquareQuote, CalendarCheck, Timer, ShieldQuestion, ShieldAlert, ShieldCheck, Coffee, PlaneTakeoff, Briefcase } from 'lucide-react';
+import { CheckCircle2, Clock, MessageSquareQuote, CalendarCheck, ShieldQuestion, ShieldAlert, ShieldCheck, Coffee, PlaneTakeoff, Briefcase } from 'lucide-react';
 
 interface Props {
   attendance: AttendanceRecord[];
@@ -19,9 +19,9 @@ const AttendanceTable: React.FC<Props> = ({ attendance, permissions = [], onJust
         </div>
         <div className="flex flex-wrap items-center gap-4 text-xs font-bold text-slate-400 bg-white border border-slate-200 px-4 py-2 rounded-xl">
           <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-emerald-500"></div> Normal</div>
-          <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-blue-500"></div> Lembur/Tugas</div>
+          <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-blue-600"></div> Lembur/Tugas</div>
           <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-rose-500"></div> Terlambat</div>
-          <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-rose-300"></div> Libur</div>
+          <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-rose-200"></div> Tgl Merah</div>
           <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-slate-300"></div> Akhir Pekan</div>
         </div>
       </div>
@@ -53,7 +53,6 @@ const AttendanceTable: React.FC<Props> = ({ attendance, permissions = [], onJust
                 const permission = permissions.find(p => p.startDate === row.date);
                 
                 // Deteksi Hari Libur / Weekend
-                // Catatan: row.remarks biasanya diisi 'Libur Akhir Pekan' atau Nama Hari Libur oleh parent component jika kosong
                 const isWeekend = row.day === 'Sabtu' || row.day === 'Minggu';
                 // Cek apakah remarks mengandung kata libur tapi BUKAN karena kehadiran
                 const isHoliday = !isWeekend && (row.remarks === 'Belum Ada Data' ? false : (row.remarks.includes('Libur') || row.remarks.includes('Cuti Bersama')));
@@ -61,49 +60,87 @@ const AttendanceTable: React.FC<Props> = ({ attendance, permissions = [], onJust
                 // Cek apakah HADIR di hari libur (Lembur)
                 const isPresentOnHoliday = (isWeekend || isHoliday) && row.fingerprintIn;
 
+                // Tentukan warna background baris
+                let rowBackgroundClass = 'hover:bg-slate-50/50'; // Default hari kerja
+                if (isHoliday) {
+                  rowBackgroundClass = 'bg-rose-50'; // Merah muda untuk Libur Nasional
+                } else if (isWeekend) {
+                  rowBackgroundClass = 'bg-slate-50'; // Abu-abu untuk Weekend
+                }
+
                 return (
-                  <tr key={row.id} className={`hover:bg-slate-50/50 transition-colors group ${(!isPresentOnHoliday && (isWeekend || isHoliday)) ? 'bg-slate-50/30' : ''}`}>
-                    <td className="px-8 py-6 text-sm font-mono text-slate-300">{(idx + 1).toString().padStart(2, '0')}</td>
+                  <tr key={row.id} className={`${rowBackgroundClass} transition-colors group border-b border-slate-100 last:border-0`}>
+                    <td className="px-8 py-6 text-sm font-mono text-slate-400">{(idx + 1).toString().padStart(2, '0')}</td>
+                    
+                    {/* Kolom Hari & Tanggal */}
                     <td className="px-8 py-6">
                       <div className="flex flex-col">
-                        <span className={`text-sm font-bold ${isWeekend || isHoliday ? 'text-rose-400' : 'text-slate-700'}`}>{row.day}</span>
-                        <span className="text-xs text-slate-400">{row.date}</span>
+                        <span className={`text-sm font-bold ${
+                          isHoliday ? 'text-rose-600' : 
+                          isWeekend ? 'text-slate-500' : 'text-slate-700'
+                        }`}>
+                          {row.day}
+                        </span>
+                        <span className={`text-xs ${isHoliday ? 'text-rose-400' : 'text-slate-400'}`}>{row.date}</span>
                       </div>
                     </td>
+
+                    {/* Kolom Jadwal Masuk */}
                     <td className="px-8 py-6 text-center text-sm font-semibold text-slate-400">
-                      {/* Jika hadir di hari libur, jadwalnya dianggap Flexibel/Lembur */}
-                      {isPresentOnHoliday ? <span className="text-[10px] bg-blue-50 text-blue-600 px-2 py-1 rounded">LEMBUR</span> : row.shiftIn}
+                      {isPresentOnHoliday ? (
+                        <span className="text-[10px] bg-blue-100 text-blue-700 px-2 py-1 rounded font-bold">EXTRA</span>
+                      ) : (
+                        <span className={isHoliday ? 'text-rose-300' : ''}>{row.shiftIn}</span>
+                      )}
                     </td>
+
+                    {/* Kolom Finger In (Highlight Biru jika masuk saat libur) */}
                     <td className="px-8 py-6 text-center">
                       <span className={`text-sm font-black ${
-                        row.isLate && !isPresentOnHoliday ? 'text-rose-600' : 
-                        row.fingerprintIn ? (isPresentOnHoliday ? 'text-blue-600' : 'text-emerald-600') : 'text-slate-300'
+                        isPresentOnHoliday ? 'text-blue-600' : // Biru jika lembur
+                        row.isLate ? 'text-rose-600' : 
+                        row.fingerprintIn ? 'text-emerald-600' : 
+                        isHoliday ? 'text-rose-300' : 'text-slate-300' // Merah pudar jika libur & tidak masuk
                       }`}>
                         {row.fingerprintIn || '--:--'}
                       </span>
                     </td>
+
+                    {/* Kolom Jadwal Pulang */}
                     <td className="px-8 py-6 text-center text-sm font-semibold text-slate-400">
-                      {isPresentOnHoliday ? <span className="text-[10px] bg-blue-50 text-blue-600 px-2 py-1 rounded">TUGAS</span> : row.shiftOut}
+                      {isPresentOnHoliday ? (
+                         <span className="text-[10px] bg-blue-100 text-blue-700 px-2 py-1 rounded font-bold">TASK</span>
+                      ) : (
+                         <span className={isHoliday ? 'text-rose-300' : ''}>{row.shiftOut}</span>
+                      )}
                     </td>
-                    <td className="px-8 py-6 text-center text-sm font-bold text-slate-700">
-                      <span className={row.fingerprintOut ? (isPresentOnHoliday ? 'text-blue-600' : 'text-slate-700') : 'text-slate-300'}>
+
+                    {/* Kolom Finger Out */}
+                    <td className="px-8 py-6 text-center text-sm font-bold">
+                      <span className={`${
+                         isPresentOnHoliday && row.fingerprintOut ? 'text-blue-600' :
+                         row.fingerprintOut ? 'text-slate-700' : 
+                         isHoliday ? 'text-rose-300' : 'text-slate-300'
+                      }`}>
                         {row.fingerprintOut || '--:--'}
                       </span>
                     </td>
+
+                    {/* Kolom Status & Aksi */}
                     <td className="px-8 py-6">
                       <div className="flex items-center gap-3">
                         <div className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-tight ${
                           isPresentOnHoliday 
-                            ? 'bg-blue-50 text-blue-700 border border-blue-100' // Prioritas: Hadir di Hari Libur (Biru)
+                            ? 'bg-blue-600 text-white shadow-md shadow-blue-200' // Biru solid mencolok untuk Lembur
                             : row.isLate 
                             ? 'bg-rose-50 text-rose-700 border border-rose-100' 
                             : isHoliday
-                            ? 'bg-rose-100 text-rose-700 border border-rose-200'
+                            ? 'bg-rose-100 text-rose-600 border border-rose-200' // Status Libur Merah
                             : isWeekend
-                            ? 'bg-slate-100 text-slate-500 border border-slate-200'
+                            ? 'bg-slate-200 text-slate-500 border border-slate-300'
                             : row.fingerprintIn
                             ? 'bg-emerald-50 text-emerald-700 border border-emerald-100'
-                            : 'bg-slate-50 text-slate-400 border border-slate-100'
+                            : 'bg-slate-100 text-slate-400 border border-slate-200'
                         }`}>
                           {isPresentOnHoliday ? <Briefcase size={12} /> : 
                            row.isLate ? <Clock size={12} /> : 
@@ -111,11 +148,10 @@ const AttendanceTable: React.FC<Props> = ({ attendance, permissions = [], onJust
                            isWeekend ? <Coffee size={12} /> : 
                            <CheckCircle2 size={12} />}
                           
-                          {/* Teks Status */}
-                          {isPresentOnHoliday ? 'Hadir (Hari Libur)' : row.remarks}
+                          {isPresentOnHoliday ? 'Hadir (Lembur)' : row.remarks}
                         </div>
                         
-                        {/* Tombol Izin hanya muncul jika terlambat dan bukan hari libur/lembur */}
+                        {/* Tombol Justify (Izin) */}
                         {row.isLate && !permission && !isPresentOnHoliday && (
                           <button 
                             onClick={() => onJustifyLate?.(row.date)}
