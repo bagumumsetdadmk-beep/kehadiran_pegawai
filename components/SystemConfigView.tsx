@@ -1,5 +1,5 @@
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Building2, 
   Upload, 
@@ -25,17 +25,20 @@ import {
   RefreshCw,
   Power,
   Database,
-  ArrowDownToLine
+  ArrowDownToLine,
+  Link,
+  Unplug,
+  Eye,
+  EyeOff
 } from 'lucide-react';
-import { AttendanceRecord, Employee, Holiday, WorkSchedule, FingerprintMachine } from '../types';
+import { AttendanceRecord, Employee, Holiday, WorkSchedule, FingerprintMachine, OrganizationProfile } from '../types';
 import { exportAllEmployeesMonthlyAttendanceExcel, exportAttendanceToExcel } from '../utils/exportUtils';
+import { checkSupabaseConnection } from '../lib/supabaseClient';
 
 interface Props {
   onImportFingerprint: (event: React.ChangeEvent<HTMLInputElement>) => void;
-  onLogoChange: (logo: string | null) => void;
-  onNameChange: (name: string) => void;
-  currentName: string;
-  currentLogo: string | null;
+  opdProfile: OrganizationProfile;
+  onUpdateOpdProfile: (profile: OrganizationProfile) => void;
   subBagianList: string[];
   employees: Employee[];
   attendance: AttendanceRecord[];
@@ -53,10 +56,8 @@ interface Props {
 
 const SystemConfigView: React.FC<Props> = ({ 
   onImportFingerprint, 
-  onLogoChange, 
-  onNameChange,
-  currentName,
-  currentLogo,
+  opdProfile,
+  onUpdateOpdProfile,
   subBagianList,
   employees,
   attendance,
@@ -71,17 +72,14 @@ const SystemConfigView: React.FC<Props> = ({
   onUpdateMachine,
   onSyncAttendance
 }) => {
-  const [opdInfo, setOpdInfo] = useState({
-    name: currentName,
-    address: 'Jl. Merdeka No. 123, Kota Pemerintahan',
-    head: 'Dr. Ir. H. Ahmad Sudarsono, M.T.',
-    nipHead: '197508202000031001',
-    website: 'https://diskominfo.opd.go.id'
-  });
-
+  const [localOpdInfo, setLocalOpdInfo] = useState<OrganizationProfile>(opdProfile);
   const [newSubBagian, setNewSubBagian] = useState('');
   const [isSaved, setIsSaved] = useState(false);
   
+  useEffect(() => {
+    setLocalOpdInfo(opdProfile);
+  }, [opdProfile]);
+
   // State for Exports
   const [exportMonth, setExportMonth] = useState(new Date().toISOString().substring(0, 7));
   const [exportCategory, setExportCategory] = useState<'all' | 'staff' | 'manager'>('staff'); 
@@ -97,6 +95,14 @@ const SystemConfigView: React.FC<Props> = ({
     startDate: '',
     endDate: ''
   });
+
+  // State for Database Config
+  const [dbConfig, setDbConfig] = useState({
+    url: localStorage.getItem('SB_URL') || '',
+    key: localStorage.getItem('SB_KEY') || ''
+  });
+  const [dbStatus, setDbStatus] = useState<'checking' | 'connected' | 'disconnected'>('checking');
+  const [showDbKey, setShowDbKey] = useState(false);
   
   // Machine Config State
   const [localMachineConfig, setLocalMachineConfig] = useState<FingerprintMachine>(
@@ -115,9 +121,37 @@ const SystemConfigView: React.FC<Props> = ({
 
   const weekDays = ['Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu', 'Minggu'];
 
+  // Effect untuk cek koneksi database saat load
+  useEffect(() => {
+    const initDbCheck = async () => {
+      const isConnected = await checkSupabaseConnection();
+      setDbStatus(isConnected ? 'connected' : 'disconnected');
+    };
+    initDbCheck();
+  }, []);
+
+  const handleSaveDBConfig = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setDbStatus('checking');
+    
+    // Tes koneksi dengan kredensial baru
+    const isSuccess = await checkSupabaseConnection(dbConfig.url, dbConfig.key);
+    
+    if (isSuccess) {
+      localStorage.setItem('SB_URL', dbConfig.url);
+      localStorage.setItem('SB_KEY', dbConfig.key);
+      setDbStatus('connected');
+      alert("Koneksi Database Berhasil & Tersimpan! Halaman akan dimuat ulang.");
+      window.location.reload(); // Reload agar supabaseClient mengambil config baru
+    } else {
+      setDbStatus('disconnected');
+      alert("Gagal terhubung ke Database. Periksa URL dan Anon Key Anda.");
+    }
+  };
+
   const handleSaveOPD = (e: React.FormEvent) => {
     e.preventDefault();
-    onNameChange(opdInfo.name);
+    onUpdateOpdProfile(localOpdInfo);
     setIsSaved(true);
     setTimeout(() => setIsSaved(false), 3000);
   };
@@ -127,7 +161,7 @@ const SystemConfigView: React.FC<Props> = ({
     if (file) {
       const reader = new FileReader();
       reader.onloadend = () => {
-        onLogoChange(reader.result as string);
+        setLocalOpdInfo(prev => ({ ...prev, logoUrl: reader.result as string }));
       };
       reader.readAsDataURL(file);
     }
@@ -204,27 +238,23 @@ const SystemConfigView: React.FC<Props> = ({
   const handleSaveMachine = () => {
     if(onUpdateMachine) {
         onUpdateMachine(localMachineConfig);
-        alert("Konfigurasi mesin berhasil disimpan!");
     }
   };
 
-  // REAL CONNECTION TO MIDDLEWARE
   const handleTestConnection = async () => {
     setIsTestingConnection(true);
     setConnectionStatus('idle');
 
-    // Split IPs jika ada koma
     const ips = localMachineConfig.ipAddress.split(',').map(i => i.trim());
 
     try {
-      // Kita kirim request ke middleware. Middleware yang akan loop semua IP.
       const response = await fetch('http://localhost:3001/api/test-connection', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          ips: ips, // Kirim Array IP
+          ips: ips, 
           port: parseInt(localMachineConfig.port),
           commKey: parseInt(localMachineConfig.commKey)
         }),
@@ -239,7 +269,6 @@ const SystemConfigView: React.FC<Props> = ({
       }
     } catch (error) {
       console.error("Middleware error:", error);
-      // Fallback: Jika gagal connect ke localhost:3001, kita asumsikan middleware belum jalan
       setConnectionStatus('middleware_error');
     } finally {
       setIsTestingConnection(false);
@@ -260,8 +289,6 @@ const SystemConfigView: React.FC<Props> = ({
           ips: ips,
           port: parseInt(localMachineConfig.port),
           commKey: parseInt(localMachineConfig.commKey),
-          // Kirim juga filter subbagian user saat ini jika diperlukan untuk validasi server-side
-          // tapi biasanya server script punya env sendiri.
         }),
       });
 
@@ -297,7 +324,7 @@ const SystemConfigView: React.FC<Props> = ({
       dataToExport, 
       attendance, 
       exportMonth, 
-      currentName,
+      opdProfile.name,
       exportCategory
     );
   };
@@ -416,8 +443,77 @@ const SystemConfigView: React.FC<Props> = ({
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+
+        {/* Database Configuration (NEW) */}
+        <div className="bg-white rounded-3xl shadow-sm border border-slate-200 overflow-hidden lg:col-span-1">
+          <div className="p-8 border-b border-slate-100 bg-slate-50/50 flex items-center gap-3">
+             <div className="p-2 bg-blue-100 text-blue-600 rounded-lg">
+                <Database size={20} />
+             </div>
+             <div>
+               <h3 className="text-lg font-bold text-slate-800">Koneksi Database</h3>
+               <p className="text-xs text-slate-500">Konfigurasi URL dan Key Supabase.</p>
+             </div>
+          </div>
+          <div className="p-8 space-y-6">
+             <div className={`flex items-center gap-4 p-4 rounded-xl border ${
+               dbStatus === 'connected' ? 'bg-emerald-50 border-emerald-200' : 
+               dbStatus === 'disconnected' ? 'bg-rose-50 border-rose-200' : 'bg-slate-50 border-slate-200'
+             }`}>
+               <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
+                 dbStatus === 'connected' ? 'bg-emerald-100 text-emerald-600' : 
+                 dbStatus === 'disconnected' ? 'bg-rose-100 text-rose-600' : 'bg-slate-200 text-slate-500'
+               }`}>
+                 {dbStatus === 'connected' ? <Link size={20} /> : 
+                  dbStatus === 'disconnected' ? <Unplug size={20} /> : <RefreshCw size={20} className="animate-spin" />}
+               </div>
+               <div>
+                 <p className="text-xs font-bold text-slate-400 uppercase">Status Koneksi</p>
+                 <p className={`text-sm font-bold ${
+                   dbStatus === 'connected' ? 'text-emerald-600' : 
+                   dbStatus === 'disconnected' ? 'text-rose-600' : 'text-slate-600'
+                 }`}>
+                   {dbStatus === 'connected' ? 'Terhubung dengan Database' : 
+                    dbStatus === 'disconnected' ? 'Terputus / Tidak Valid' : 'Memeriksa...'}
+                 </p>
+               </div>
+             </div>
+
+             <form onSubmit={handleSaveDBConfig} className="space-y-4">
+                <div className="space-y-1.5">
+                   <label className="text-[10px] font-bold text-slate-500 uppercase">Supabase URL</label>
+                   <input 
+                     type="text" 
+                     placeholder="https://xyz.supabase.co" 
+                     className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-500 font-mono" 
+                     value={dbConfig.url} 
+                     onChange={(e) => setDbConfig({...dbConfig, url: e.target.value})} 
+                   />
+                </div>
+                <div className="space-y-1.5">
+                   <label className="text-[10px] font-bold text-slate-500 uppercase">Supabase Anon Key</label>
+                   <div className="relative">
+                     <input 
+                       type={showDbKey ? "text" : "password"} 
+                       placeholder="eyJhbGciOiJIUzI1NiIsInR..." 
+                       className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-500 font-mono pr-10" 
+                       value={dbConfig.key} 
+                       onChange={(e) => setDbConfig({...dbConfig, key: e.target.value})} 
+                     />
+                     <button type="button" onClick={() => setShowDbKey(!showDbKey)} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
+                        {showDbKey ? <EyeOff size={16} /> : <Eye size={16} />}
+                     </button>
+                   </div>
+                </div>
+                
+                <button type="submit" className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2 shadow-lg shadow-blue-100 transition-all">
+                  <Save size={16} /> Simpan & Tes Koneksi
+                </button>
+             </form>
+          </div>
+        </div>
         
-        {/* Machine Configuration (New) */}
+        {/* Machine Configuration */}
         <div className="bg-white rounded-3xl shadow-sm border border-slate-200 overflow-hidden lg:col-span-1">
           <div className="p-8 border-b border-slate-100 bg-slate-50/50 flex items-center gap-3">
              <div className="p-2 bg-emerald-100 text-emerald-600 rounded-lg">
@@ -694,10 +790,10 @@ const SystemConfigView: React.FC<Props> = ({
               <label className="text-xs font-black text-slate-400 uppercase tracking-widest">Logo Instansi</label>
               <div className="flex items-center gap-6 p-4 bg-slate-50 border border-slate-200 rounded-2xl">
                 <div className="w-20 h-20 bg-white border border-slate-200 rounded-xl flex items-center justify-center overflow-hidden shrink-0 relative group">
-                  {currentLogo ? (
+                  {localOpdInfo.logoUrl ? (
                     <>
-                      <img src={currentLogo} alt="Logo Preview" className="w-full h-full object-contain p-2" />
-                      <button type="button" onClick={() => onLogoChange(null)} className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white"><X size={20} /></button>
+                      <img src={localOpdInfo.logoUrl} alt="Logo Preview" className="w-full h-full object-contain p-2" />
+                      <button type="button" onClick={() => setLocalOpdInfo(prev => ({...prev, logoUrl: null}))} className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white"><X size={20} /></button>
                     </>
                   ) : (
                     <ImageIcon className="text-slate-300" size={32} />
@@ -714,20 +810,20 @@ const SystemConfigView: React.FC<Props> = ({
             </div>
             <div className="space-y-2">
               <label className="text-xs font-black text-slate-400 uppercase tracking-widest">Nama Instansi / OPD</label>
-              <input type="text" className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-indigo-500 outline-none" value={opdInfo.name} onChange={(e) => setOpdInfo({...opdInfo, name: e.target.value})} />
+              <input type="text" className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-indigo-500 outline-none" value={localOpdInfo.name} onChange={(e) => setLocalOpdInfo({...localOpdInfo, name: e.target.value})} />
             </div>
             <div className="space-y-2">
               <label className="text-xs font-black text-slate-400 uppercase tracking-widest">Alamat Kantor</label>
-              <textarea rows={2} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-indigo-500 outline-none resize-none" value={opdInfo.address} onChange={(e) => setOpdInfo({...opdInfo, address: e.target.value})} />
+              <textarea rows={2} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-indigo-500 outline-none resize-none" value={localOpdInfo.address} onChange={(e) => setLocalOpdInfo({...localOpdInfo, address: e.target.value})} />
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="space-y-2">
                 <label className="text-xs font-black text-slate-400 uppercase tracking-widest">Nama Pimpinan</label>
-                <input type="text" className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm" value={opdInfo.head} onChange={(e) => setOpdInfo({...opdInfo, head: e.target.value})} />
+                <input type="text" className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm" value={localOpdInfo.headName} onChange={(e) => setLocalOpdInfo({...localOpdInfo, headName: e.target.value})} />
               </div>
               <div className="space-y-2">
                 <label className="text-xs font-black text-slate-400 uppercase tracking-widest">NIP Pimpinan</label>
-                <input type="text" className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm" value={opdInfo.nipHead} onChange={(e) => setOpdInfo({...opdInfo, nipHead: e.target.value})} />
+                <input type="text" className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm" value={localOpdInfo.headNip} onChange={(e) => setLocalOpdInfo({...localOpdInfo, headNip: e.target.value})} />
               </div>
             </div>
             <button type="submit" className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold py-3.5 rounded-xl transition-all flex items-center justify-center gap-2">

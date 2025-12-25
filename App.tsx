@@ -15,7 +15,7 @@ import {
   CalendarDays
 } from 'lucide-react';
 import { MOCK_EMPLOYEES, MOCK_ATTENDANCE, MOCK_PERMISSIONS, MOCK_SCHEDULES, MOCK_MACHINE } from './constants';
-import { AttendanceRecord, PermissionRequest, PermissionStatus, Employee, Holiday, WorkSchedule, FingerprintMachine } from './types';
+import { AttendanceRecord, PermissionRequest, PermissionStatus, Employee, Holiday, WorkSchedule, FingerprintMachine, OrganizationProfile } from './types';
 import PermissionForm from './components/PermissionForm';
 import PermissionList from './components/PermissionList';
 import ManagerView from './components/ManagerView';
@@ -40,17 +40,24 @@ const App: React.FC = () => {
   const [holidays, setHolidays] = useState<Holiday[]>([]);
   const [schedules, setSchedules] = useState<WorkSchedule[]>(MOCK_SCHEDULES);
   const [machineConfig, setMachineConfig] = useState<FingerprintMachine>(MOCK_MACHINE);
-  const [opdLogo, setOpdLogo] = useState<string | null>(null);
-  const [opdName, setOpdName] = useState<string>("Dinas Komunikasi dan Informatika");
+  const [opdProfile, setOpdProfile] = useState<OrganizationProfile>({
+    name: "Dinas Komunikasi dan Informatika",
+    address: "Jl. Merdeka No. 123",
+    headName: "Kepala Dinas",
+    headNip: "-",
+    website: "",
+    logoUrl: null
+  });
   const [selectedDateForPermission, setSelectedDateForPermission] = useState<string | null>(null);
 
   useEffect(() => {
     const link: HTMLLinkElement = document.querySelector("link[rel*='icon']") || document.createElement('link');
     link.type = 'image/x-icon';
     link.rel = 'shortcut icon';
-    link.href = opdLogo || 'https://cdn-icons-png.flaticon.com/512/2913/2913008.png';
+    link.href = opdProfile.logoUrl || 'https://cdn-icons-png.flaticon.com/512/2913/2913008.png';
     document.getElementsByTagName('head')[0].appendChild(link);
-  }, [opdLogo]);
+    document.title = opdProfile.name || 'AbsensiPintar';
+  }, [opdProfile.logoUrl, opdProfile.name]);
 
   // --- FETCH DATA DARI SUPABASE ---
   useEffect(() => {
@@ -62,10 +69,9 @@ const App: React.FC = () => {
         
         // 1. Fetch Employees
         const { data: dbEmployees, error: empError } = await supabase.from('employees').select('*');
-        let currentEmployees = employees; // Default to mock
+        let currentEmployees = employees; 
 
         if (!empError && dbEmployees && dbEmployees.length > 0) {
-          // Map DB columns (snake_case) to App types (camelCase)
           const mappedEmployees: Employee[] = dbEmployees.map((e: any) => ({
             id: e.id,
             nip: e.nip,
@@ -80,7 +86,7 @@ const App: React.FC = () => {
             fingerprintId: e.fingerprint_id
           }));
           setEmployees(mappedEmployees);
-          currentEmployees = mappedEmployees; // Update reference for attendance mapping
+          currentEmployees = mappedEmployees;
         }
 
         // 2. Fetch Holidays
@@ -111,20 +117,15 @@ const App: React.FC = () => {
 
         // 4. Fetch Attendance Logs
         const { data: dbLogs, error: logError } = await supabase.from('attendance_logs').select('*');
-        
         if (!logError && dbLogs && dbLogs.length > 0) {
           const newAttendanceRecords: AttendanceRecord[] = dbLogs.map((log: any) => {
-             // Cari pegawai yang punya fingerprint_id ini
-             // Note: Kita pakai currentEmployees yang baru saja di-fetch (atau mock jika fetch gagal)
              const relatedEmp = currentEmployees.find(e => e.fingerprintId === log.fingerprint_id);
-             
-             // Hitung status terlambat (Logika sederhana, idealnya dari schedule)
              const checkInTime = log.check_in || '00:00:00';
              const isLate = checkInTime > '08:00:00'; 
 
              return {
                 id: String(log.id),
-                employeeId: relatedEmp ? relatedEmp.id : 'unknown', // Jika unknown, tidak muncul di list pegawai
+                employeeId: relatedEmp ? relatedEmp.id : 'unknown', 
                 date: log.date,
                 day: new Date(log.date).toLocaleDateString('id-ID', { weekday: 'long' }),
                 shiftIn: '08:00', 
@@ -136,7 +137,6 @@ const App: React.FC = () => {
              };
           });
 
-          // Filter hanya log yang punya pemilik pegawai terdaftar
           const validRecords = newAttendanceRecords.filter(r => r.employeeId !== 'unknown');
           if (validRecords.length > 0) {
             setAttendance(validRecords);
@@ -152,8 +152,41 @@ const App: React.FC = () => {
             commKey: dbConfig.comm_key,
             name: 'Cluster Mesin Kantor',
             lastSync: null,
-            status: 'Offline' // Status default sebelum di cek script
+            status: 'Offline'
           });
+        }
+
+        // 6. Fetch OPD Profile
+        const { data: dbProfile } = await supabase.from('organization_profile').select('*').single();
+        if (dbProfile) {
+          setOpdProfile({
+            name: dbProfile.name,
+            address: dbProfile.address,
+            headName: dbProfile.head_name,
+            headNip: dbProfile.head_nip,
+            website: dbProfile.website,
+            logoUrl: dbProfile.logo_url
+          });
+        }
+
+        // 7. Fetch Sub Bagian
+        const { data: dbSub } = await supabase.from('sub_bagian').select('name');
+        if (dbSub && dbSub.length > 0) {
+          setSubBagianList(dbSub.map((s: any) => s.name));
+        }
+
+        // 8. Fetch Schedules
+        const { data: dbSchedules } = await supabase.from('work_schedules').select('*');
+        if (dbSchedules && dbSchedules.length > 0) {
+          setSchedules(dbSchedules.map((s: any) => ({
+            id: s.id,
+            name: s.name,
+            days: s.days,
+            startTime: s.start_time,
+            endTime: s.end_time,
+            startDate: s.start_date,
+            endDate: s.end_date
+          })));
         }
 
       } catch (err) {
@@ -163,7 +196,7 @@ const App: React.FC = () => {
 
     fetchRealData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // Run once on mount
+  }, []);
 
   useEffect(() => {
     if (currentUser) {
@@ -193,7 +226,6 @@ const App: React.FC = () => {
   };
 
   const handleAddPermission = async (newPermission: Omit<PermissionRequest, 'id' | 'status' | 'employeeName'>) => {
-    // Optimistic Update
     const tempId = `perm-${Date.now()}`;
     const fullPermission: PermissionRequest = {
       ...newPermission,
@@ -205,7 +237,6 @@ const App: React.FC = () => {
     setActiveView('permission_history');
     alert("Izin berhasil diajukan.");
 
-    // Sync to Supabase if configured
     if (isSupabaseConfigured() && supabase) {
       await supabase.from('permissions').insert({
         id: tempId,
@@ -222,8 +253,6 @@ const App: React.FC = () => {
 
   const handleUpdatePermissionStatus = async (id: string, status: PermissionStatus) => {
     setPermissions(prev => prev.map(p => p.id === id ? { ...p, status } : p));
-    
-    // Sync to Supabase
     if (isSupabaseConfigured() && supabase) {
       await supabase.from('permissions').update({ status }).eq('id', id);
     }
@@ -238,7 +267,6 @@ const App: React.FC = () => {
 
   const handleAddEmployee = async (emp: Employee) => {
     setEmployees(prev => [...prev, emp]);
-    
     if (isSupabaseConfigured() && supabase) {
       await supabase.from('employees').insert({
         id: emp.id,
@@ -258,7 +286,6 @@ const App: React.FC = () => {
 
   const handleUpdateEmployee = async (updatedEmp: Employee) => {
     setEmployees(prev => prev.map(e => e.id === updatedEmp.id ? updatedEmp : e));
-
     if (isSupabaseConfigured() && supabase) {
        await supabase.from('employees').update({
         nip: updatedEmp.nip,
@@ -282,16 +309,23 @@ const App: React.FC = () => {
   };
 
   const handleBulkImportEmployees = (newEmployees: Employee[]) => {
-    // Logic bulk import khusus, bisa ditambahkan call supabase insert many disini
     setEmployees(prev => [...prev, ...newEmployees]);
   };
 
-  const handleAddSubBagian = (name: string) => {
-    if (!subBagianList.includes(name)) setSubBagianList(prev => [...prev, name]);
+  const handleAddSubBagian = async (name: string) => {
+    if (!subBagianList.includes(name)) {
+      setSubBagianList(prev => [...prev, name]);
+      if (isSupabaseConfigured() && supabase) {
+        await supabase.from('sub_bagian').insert({ name });
+      }
+    }
   };
 
-  const handleDeleteSubBagian = (name: string) => {
+  const handleDeleteSubBagian = async (name: string) => {
     setSubBagianList(prev => prev.filter(s => s !== name));
+    if (isSupabaseConfigured() && supabase) {
+      await supabase.from('sub_bagian').delete().eq('name', name);
+    }
   };
 
   const handleAddHoliday = async (holiday: Holiday) => {
@@ -308,22 +342,44 @@ const App: React.FC = () => {
     }
   };
 
-  const handleAddSchedule = (schedule: WorkSchedule) => {
+  const handleAddSchedule = async (schedule: WorkSchedule) => {
     setSchedules(prev => [...prev, schedule]);
+    if (isSupabaseConfigured() && supabase) {
+      await supabase.from('work_schedules').insert({
+        id: schedule.id,
+        name: schedule.name,
+        days: schedule.days,
+        start_time: schedule.startTime,
+        end_time: schedule.endTime,
+        start_date: schedule.startDate,
+        end_date: schedule.endDate
+      });
+    }
   };
 
-  const handleUpdateSchedule = (updatedSchedule: WorkSchedule) => {
+  const handleUpdateSchedule = async (updatedSchedule: WorkSchedule) => {
     setSchedules(prev => prev.map(s => s.id === updatedSchedule.id ? updatedSchedule : s));
+    if (isSupabaseConfigured() && supabase) {
+      await supabase.from('work_schedules').update({
+        name: updatedSchedule.name,
+        days: updatedSchedule.days,
+        start_time: updatedSchedule.startTime,
+        end_time: updatedSchedule.endTime,
+        start_date: updatedSchedule.startDate,
+        end_date: updatedSchedule.endDate
+      }).eq('id', updatedSchedule.id);
+    }
   };
 
-  const handleDeleteSchedule = (id: string) => {
+  const handleDeleteSchedule = async (id: string) => {
     setSchedules(prev => prev.filter(s => s.id !== id));
+    if (isSupabaseConfigured() && supabase) {
+      await supabase.from('work_schedules').delete().eq('id', id);
+    }
   };
 
   const handleUpdateMachine = async (config: FingerprintMachine) => {
     setMachineConfig(config);
-    
-    // Sync to Supabase
     if (isSupabaseConfigured() && supabase) {
       const { error } = await supabase.from('system_config').upsert({
         id: 'machine_conf',
@@ -341,6 +397,21 @@ const App: React.FC = () => {
     }
   };
 
+  const handleUpdateOpdProfile = async (profile: OrganizationProfile) => {
+    setOpdProfile(profile);
+    if (isSupabaseConfigured() && supabase) {
+      await supabase.from('organization_profile').upsert({
+        id: 1,
+        name: profile.name,
+        address: profile.address,
+        head_name: profile.headName,
+        head_nip: profile.headNip,
+        website: profile.website,
+        logo_url: profile.logoUrl
+      });
+    }
+  };
+
   const handleSyncAttendance = (newRecords: AttendanceRecord[]) => {
     setAttendance(prev => {
       const prevFiltered = prev.filter(p => !newRecords.some(n => n.date === p.date && n.employeeId === p.employeeId));
@@ -349,15 +420,15 @@ const App: React.FC = () => {
   };
 
   if (!currentUser) {
-    return <Login onLogin={handleLogin} logo={opdLogo} employees={employees} />;
+    return <Login onLogin={handleLogin} logo={opdProfile.logoUrl} employees={employees} />;
   }
 
   return (
     <div className="flex h-screen overflow-hidden bg-slate-50">
       <aside className={`w-72 ${isAdmin ? 'bg-slate-950' : 'bg-slate-900'} text-white flex flex-col hidden md:flex shadow-2xl z-20`}>
         <div className="p-8 flex items-center gap-3">
-          {opdLogo ? (
-            <img src={opdLogo} alt="Logo" className="w-10 h-10 rounded-xl object-contain bg-white/10 p-1" />
+          {opdProfile.logoUrl ? (
+            <img src={opdProfile.logoUrl} alt="Logo" className="w-10 h-10 rounded-xl object-contain bg-white/10 p-1" />
           ) : (
             <div className={`w-10 h-10 ${isAdmin ? 'bg-indigo-500' : 'bg-indigo-600'} rounded-xl flex items-center justify-center font-bold text-xl shadow-lg`}>
               {isAdmin ? 'AD' : 'AP'}
@@ -463,10 +534,8 @@ const App: React.FC = () => {
             {activeView === 'admin_logs' && (
               <SystemConfigView 
                 onImportFingerprint={handleImportFingerprint} 
-                onLogoChange={setOpdLogo} 
-                onNameChange={setOpdName} 
-                currentName={opdName} 
-                currentLogo={opdLogo} 
+                opdProfile={opdProfile}
+                onUpdateOpdProfile={handleUpdateOpdProfile}
                 subBagianList={subBagianList} 
                 employees={employees}
                 attendance={attendance}

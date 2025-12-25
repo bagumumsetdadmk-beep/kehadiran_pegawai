@@ -8,6 +8,15 @@ export enum PermissionStatus {
 // Changed to string to support dynamic additions
 export type SubBagian = string;
 
+export interface OrganizationProfile {
+  name: string;
+  address: string;
+  headName: string;
+  headNip: string;
+  website: string;
+  logoUrl: string | null;
+}
+
 export interface Employee {
   id: string;
   nip: string;

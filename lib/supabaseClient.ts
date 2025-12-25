@@ -1,13 +1,12 @@
+
 import { createClient } from '@supabase/supabase-js';
 
 // Helper to safely get environment variables
 const getEnv = (key: string) => {
   try {
-    // Check for Vite's import.meta.env
     if (typeof import.meta !== 'undefined' && (import.meta as any).env) {
       return (import.meta as any).env[key];
     }
-    // Check for process.env (Node/Webpack)
     if (typeof process !== 'undefined' && process.env) {
       return process.env[key];
     }
@@ -17,20 +16,56 @@ const getEnv = (key: string) => {
   return undefined;
 };
 
-// Pastikan Anda membuat file .env di root project dan mengisi variabel ini
-// VITE_SUPABASE_URL=https://xyz.supabase.co
-// VITE_SUPABASE_ANON_KEY=eyJhb...
+// 1. Coba ambil dari LocalStorage (Settingan User dari UI)
+// 2. Jika tidak ada, ambil dari Environment Variable (.env)
+const getSupabaseConfig = () => {
+  const localUrl = typeof window !== 'undefined' ? localStorage.getItem('SB_URL') : null;
+  const localKey = typeof window !== 'undefined' ? localStorage.getItem('SB_KEY') : null;
 
-const supabaseUrl = getEnv('VITE_SUPABASE_URL');
-const supabaseAnonKey = getEnv('VITE_SUPABASE_ANON_KEY');
+  const envUrl = getEnv('VITE_SUPABASE_URL');
+  const envKey = getEnv('VITE_SUPABASE_ANON_KEY');
 
-// Fallback agar aplikasi tidak crash jika env belum diset (Mode Dev/Mock)
-const isConfigured = supabaseUrl && supabaseAnonKey;
+  return {
+    url: localUrl || envUrl,
+    key: localKey || envKey
+  };
+};
 
-export const supabase = isConfigured 
-  ? createClient(supabaseUrl, supabaseAnonKey) 
+const config = getSupabaseConfig();
+
+export const supabase = (config.url && config.key) 
+  ? createClient(config.url, config.key) 
   : null;
 
 export const isSupabaseConfigured = () => {
   return !!supabase;
+};
+
+// Fungsi helper untuk mengetes koneksi
+export const checkSupabaseConnection = async (customUrl?: string, customKey?: string) => {
+  try {
+    // Gunakan client sementara untuk tes input baru, atau client utama jika tidak ada input
+    let clientToCheck = supabase;
+
+    if (customUrl && customKey) {
+      clientToCheck = createClient(customUrl, customKey);
+    }
+
+    if (!clientToCheck) return false;
+
+    // Coba query ringan (menghitung jumlah sub bagian, karena tabelnya kecil dan pasti ada)
+    const { count, error } = await clientToCheck
+      .from('sub_bagian')
+      .select('*', { count: 'exact', head: true });
+    
+    if (error) {
+      console.error("Connection check failed:", error.message);
+      return false;
+    }
+    
+    return true;
+  } catch (err) {
+    console.error("Connection check exception:", err);
+    return false;
+  }
 };
