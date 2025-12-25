@@ -143,6 +143,19 @@ const App: React.FC = () => {
           }
         }
 
+        // 5. Fetch Machine Config
+        const { data: dbConfig } = await supabase.from('system_config').select('*').eq('id', 'machine_conf').single();
+        if (dbConfig) {
+          setMachineConfig({
+            ipAddress: dbConfig.ip_addresses,
+            port: dbConfig.port,
+            commKey: dbConfig.comm_key,
+            name: 'Cluster Mesin Kantor',
+            lastSync: null,
+            status: 'Offline' // Status default sebelum di cek script
+          });
+        }
+
       } catch (err) {
         console.error("Error fetching Supabase data:", err);
       }
@@ -307,8 +320,25 @@ const App: React.FC = () => {
     setSchedules(prev => prev.filter(s => s.id !== id));
   };
 
-  const handleUpdateMachine = (config: FingerprintMachine) => {
+  const handleUpdateMachine = async (config: FingerprintMachine) => {
     setMachineConfig(config);
+    
+    // Sync to Supabase
+    if (isSupabaseConfigured() && supabase) {
+      const { error } = await supabase.from('system_config').upsert({
+        id: 'machine_conf',
+        ip_addresses: config.ipAddress,
+        port: config.port,
+        comm_key: config.commKey
+      });
+      
+      if (error) {
+        console.error("Gagal menyimpan config mesin:", error);
+        alert("Gagal menyimpan konfigurasi ke database.");
+      } else {
+        alert("Konfigurasi tersimpan! Script server lokal akan otomatis menggunakan IP baru ini.");
+      }
+    }
   };
 
   const handleSyncAttendance = (newRecords: AttendanceRecord[]) => {

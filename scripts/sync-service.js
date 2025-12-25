@@ -21,16 +21,7 @@ const net = require('net');
 // --- KONFIGURASI ---
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 
-// DAFTAR IP MESIN FINGERPRINT
-// Catatan Jaringan:
-// 1. Jika mesin satu jaringan lokal (LAN) dengan komputer ini, gunakan IP 192.168.x.x
-// 2. Jika mesin beda lokasi (via Internet), Anda WAJIB setting Port Forwarding di router lokasi mesin,
-//    lalu masukkan IP PUBLIC di sini (bukan 192.168...), atau gunakan VPN.
-const MACHINE_IPS = ['192.168.1.201', '192.168.1.202', '192.168.1.203', '192.168.1.204', '192.168.1.205']; 
-const MACHINE_PORT = 4370;
-
 // Fungsi Helper: Cek apakah IP & Port bisa dijangkau (Ping TCP)
-// Ini penting agar script tidak macet menunggu mesin yang beda jaringan/offline
 function checkConnection(host, port, timeout = 2000) {
     return new Promise((resolve, reject) => {
         const socket = new net.Socket();
@@ -60,29 +51,71 @@ function checkConnection(host, port, timeout = 2000) {
     });
 }
 
+// Fungsi Mengambil Konfigurasi dari Supabase
+async function getMachineConfig() {
+    try {
+        const { data, error } = await supabase
+            .from('system_config')
+            .select('*')
+            .eq('id', 'machine_conf')
+            .single();
+
+        if (error || !data) {
+            console.log("   ⚠️ Config tidak ditemukan di Database. Menggunakan default lokal.");
+            return {
+                ips: ['192.168.1.201'],
+                port: 4370
+            };
+        }
+
+        // Parsing IP yang dipisahkan koma (contoh: "192.168.1.10, 192.168.1.11")
+        const ips = data.ip_addresses.split(',').map(ip => ip.trim()).filter(ip => ip !== '');
+        
+        return {
+            ips: ips,
+            port: parseInt(data.port) || 4370
+        };
+
+    } catch (e) {
+        console.error("   ❌ Gagal fetch config:", e.message);
+        return { ips: [], port: 4370 };
+    }
+}
+
 async function syncData() {
     console.log(`\n[${new Date().toLocaleString()}] === MULAI SINKRONISASI ===`);
     
-    // Loop setiap mesin
-    for (const ip of MACHINE_IPS) {
-        console.log(`\n📡 Target: ${ip}`);
+    // 1. Ambil Config Terbaru dari Cloud
+    console.log(`   🔄 Mengambil konfigurasi IP terbaru...`);
+    const config = await getMachineConfig();
+    
+    if (config.ips.length === 0) {
+        console.log("   ❌ Tidak ada IP Mesin yang dikonfigurasi.");
+        return;
+    }
 
-        // 1. Cek Koneksi Jaringan Dulu (Pre-flight check)
-        const isReachable = await checkConnection(ip, MACHINE_PORT);
+    console.log(`   🎯 Target: ${config.ips.length} Mesin (Port: ${config.port})`);
+
+    // Loop setiap mesin
+    for (const ip of config.ips) {
+        console.log(`\n   📡 Menghubungkan ke: ${ip}`);
+
+        // 2. Cek Koneksi Jaringan Dulu (Pre-flight check)
+        const isReachable = await checkConnection(ip, config.port);
         if (!isReachable) {
-            console.log(`   ❌ SKIP: Mesin tidak dapat dijangkau. Cek kabel LAN atau setting Gateway/VPN.`);
+            console.log(`      ❌ SKIP: Mesin tidak dapat dijangkau (Ping failed).`);
             continue; // Lanjut ke IP berikutnya
         }
 
-        // 2. Jika lolos cek jaringan, baru inisialisasi Library Fingerprint
-        const zk = new ZKLib(ip, MACHINE_PORT, 5000, 4000); 
+        // 3. Jika lolos cek jaringan, baru inisialisasi Library Fingerprint
+        const zk = new ZKLib(ip, config.port, 5000, 4000); 
         
         try {
             await zk.createSocket();
-            console.log(`   ✅ Terhubung ke Protokol Fingerprint. Mengambil data...`);
+            console.log(`      ✅ Terhubung Protocol ZK. Mengambil data...`);
             
             const logs = await zk.getAttendances();
-            console.log(`   📄 Ditemukan ${logs.length} data log.`);
+            console.log(`      📄 Ditemukan ${logs.length} data log.`);
 
             if (logs.length === 0) {
                 await zk.disconnect();
@@ -115,10 +148,10 @@ async function syncData() {
                 if (!error) successCount++;
             }
             
-            console.log(`   💾 Berhasil simpan ${successCount} data ke Cloud.`);
+            console.log(`      💾 Berhasil simpan ${successCount} data ke Cloud.`);
 
         } catch (e) {
-            console.error(`   ❌ Error Protokol ZKLib di ${ip}:`, e.message);
+            console.error(`      ❌ Error ZKLib:`, e.message);
         } finally {
             try { await zk.disconnect(); } catch (e) {}
         }
