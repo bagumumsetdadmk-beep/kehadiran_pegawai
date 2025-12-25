@@ -38,15 +38,25 @@ const EmployeeAttendanceView: React.FC<Props> = ({ attendance, permissions, holi
       const schedule = getScheduleForDate(dateStr, dayName, schedules);
 
       if (existingRecord) {
-        fullMonthData.push({
-          ...existingRecord,
-          // Update shift info in case config changed, though usually record stores historical data.
-          // For visualization consistency, we might show configured shift or logged shift.
-          // Let's assume we display current config for clarity if record doesn't have it explicitly stored/overridden
-          shiftIn: schedule.shiftIn,
-          shiftOut: schedule.shiftOut
-        });
+        // Jika ada record fingerprint (Masuk kerja)
+        let finalRecord = { ...existingRecord };
+        
+        // Logika Khusus: Jika masuk pada Hari Libur / Weekend
+        if (isWeekend || holiday) {
+             finalRecord.isLate = false; // Tidak bisa terlambat di hari libur
+             finalRecord.remarks = existingRecord.remarks.includes('Terlambat') ? 'Hadir (Lembur)' : existingRecord.remarks;
+             // Opsional: Kita bisa override shiftIn/Out visual agar tidak membingungkan
+             finalRecord.shiftIn = '--:--';
+             finalRecord.shiftOut = '--:--';
+        } else {
+             // Jika hari kerja biasa, pastikan shift info sesuai jadwal saat ini
+             finalRecord.shiftIn = schedule.shiftIn;
+             finalRecord.shiftOut = schedule.shiftOut;
+        }
+
+        fullMonthData.push(finalRecord);
       } else {
+        // Jika tidak ada record (Absen/Libur)
         fullMonthData.push({
           id: `empty-${dateStr}`,
           employeeId: '',

@@ -1,7 +1,7 @@
 
 import React from 'react';
 import { AttendanceRecord, PermissionRequest, PermissionStatus } from '../types';
-import { AlertTriangle, CheckCircle2, Clock, MessageSquareQuote, CalendarCheck, Timer, ShieldQuestion, ShieldAlert, ShieldCheck, Coffee, PlaneTakeoff } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Clock, MessageSquareQuote, CalendarCheck, Timer, ShieldQuestion, ShieldAlert, ShieldCheck, Coffee, PlaneTakeoff, Briefcase } from 'lucide-react';
 
 interface Props {
   attendance: AttendanceRecord[];
@@ -19,8 +19,9 @@ const AttendanceTable: React.FC<Props> = ({ attendance, permissions = [], onJust
         </div>
         <div className="flex flex-wrap items-center gap-4 text-xs font-bold text-slate-400 bg-white border border-slate-200 px-4 py-2 rounded-xl">
           <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-emerald-500"></div> Normal</div>
+          <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-blue-500"></div> Lembur/Tugas</div>
           <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-rose-500"></div> Terlambat</div>
-          <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-rose-400"></div> Libur Nasional</div>
+          <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-rose-300"></div> Libur</div>
           <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-slate-300"></div> Akhir Pekan</div>
         </div>
       </div>
@@ -50,11 +51,18 @@ const AttendanceTable: React.FC<Props> = ({ attendance, permissions = [], onJust
             ) : (
               attendance.map((row, idx) => {
                 const permission = permissions.find(p => p.startDate === row.date);
-                const isWeekend = row.day === 'Sabtu' || row.day === 'Minggu';
-                const isHoliday = !isWeekend && (row.remarks !== 'Belum Ada Data' && row.remarks !== 'Tepat Waktu' && !row.remarks.includes('Terlambat') && !row.fingerprintIn);
                 
+                // Deteksi Hari Libur / Weekend
+                // Catatan: row.remarks biasanya diisi 'Libur Akhir Pekan' atau Nama Hari Libur oleh parent component jika kosong
+                const isWeekend = row.day === 'Sabtu' || row.day === 'Minggu';
+                // Cek apakah remarks mengandung kata libur tapi BUKAN karena kehadiran
+                const isHoliday = !isWeekend && (row.remarks === 'Belum Ada Data' ? false : (row.remarks.includes('Libur') || row.remarks.includes('Cuti Bersama')));
+
+                // Cek apakah HADIR di hari libur (Lembur)
+                const isPresentOnHoliday = (isWeekend || isHoliday) && row.fingerprintIn;
+
                 return (
-                  <tr key={row.id} className={`hover:bg-slate-50/50 transition-colors group ${isWeekend || isHoliday ? 'bg-slate-50/30' : ''}`}>
+                  <tr key={row.id} className={`hover:bg-slate-50/50 transition-colors group ${(!isPresentOnHoliday && (isWeekend || isHoliday)) ? 'bg-slate-50/30' : ''}`}>
                     <td className="px-8 py-6 text-sm font-mono text-slate-300">{(idx + 1).toString().padStart(2, '0')}</td>
                     <td className="px-8 py-6">
                       <div className="flex flex-col">
@@ -62,25 +70,32 @@ const AttendanceTable: React.FC<Props> = ({ attendance, permissions = [], onJust
                         <span className="text-xs text-slate-400">{row.date}</span>
                       </div>
                     </td>
-                    <td className="px-8 py-6 text-center text-sm font-semibold text-slate-400">{row.shiftIn}</td>
+                    <td className="px-8 py-6 text-center text-sm font-semibold text-slate-400">
+                      {/* Jika hadir di hari libur, jadwalnya dianggap Flexibel/Lembur */}
+                      {isPresentOnHoliday ? <span className="text-[10px] bg-blue-50 text-blue-600 px-2 py-1 rounded">LEMBUR</span> : row.shiftIn}
+                    </td>
                     <td className="px-8 py-6 text-center">
                       <span className={`text-sm font-black ${
-                        row.isLate ? 'text-rose-600' : 
-                        row.fingerprintIn ? 'text-emerald-600' : 'text-slate-300'
+                        row.isLate && !isPresentOnHoliday ? 'text-rose-600' : 
+                        row.fingerprintIn ? (isPresentOnHoliday ? 'text-blue-600' : 'text-emerald-600') : 'text-slate-300'
                       }`}>
                         {row.fingerprintIn || '--:--'}
                       </span>
                     </td>
-                    <td className="px-8 py-6 text-center text-sm font-semibold text-slate-400">{row.shiftOut}</td>
+                    <td className="px-8 py-6 text-center text-sm font-semibold text-slate-400">
+                      {isPresentOnHoliday ? <span className="text-[10px] bg-blue-50 text-blue-600 px-2 py-1 rounded">TUGAS</span> : row.shiftOut}
+                    </td>
                     <td className="px-8 py-6 text-center text-sm font-bold text-slate-700">
-                      <span className={row.fingerprintOut ? 'text-slate-700' : 'text-slate-300'}>
+                      <span className={row.fingerprintOut ? (isPresentOnHoliday ? 'text-blue-600' : 'text-slate-700') : 'text-slate-300'}>
                         {row.fingerprintOut || '--:--'}
                       </span>
                     </td>
                     <td className="px-8 py-6">
                       <div className="flex items-center gap-3">
                         <div className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-tight ${
-                          row.isLate 
+                          isPresentOnHoliday 
+                            ? 'bg-blue-50 text-blue-700 border border-blue-100' // Prioritas: Hadir di Hari Libur (Biru)
+                            : row.isLate 
                             ? 'bg-rose-50 text-rose-700 border border-rose-100' 
                             : isHoliday
                             ? 'bg-rose-100 text-rose-700 border border-rose-200'
@@ -90,11 +105,18 @@ const AttendanceTable: React.FC<Props> = ({ attendance, permissions = [], onJust
                             ? 'bg-emerald-50 text-emerald-700 border border-emerald-100'
                             : 'bg-slate-50 text-slate-400 border border-slate-100'
                         }`}>
-                          {row.isLate ? <Clock size={12} /> : isHoliday ? <PlaneTakeoff size={12} /> : isWeekend ? <Coffee size={12} /> : <CheckCircle2 size={12} />}
-                          {row.remarks}
+                          {isPresentOnHoliday ? <Briefcase size={12} /> : 
+                           row.isLate ? <Clock size={12} /> : 
+                           isHoliday ? <PlaneTakeoff size={12} /> : 
+                           isWeekend ? <Coffee size={12} /> : 
+                           <CheckCircle2 size={12} />}
+                          
+                          {/* Teks Status */}
+                          {isPresentOnHoliday ? 'Hadir (Hari Libur)' : row.remarks}
                         </div>
                         
-                        {row.isLate && !permission && (
+                        {/* Tombol Izin hanya muncul jika terlambat dan bukan hari libur/lembur */}
+                        {row.isLate && !permission && !isPresentOnHoliday && (
                           <button 
                             onClick={() => onJustifyLate?.(row.date)}
                             className="bg-indigo-600 text-white p-1.5 rounded-lg hover:bg-indigo-700 transition-all shadow-sm flex items-center gap-1.5 pr-3"

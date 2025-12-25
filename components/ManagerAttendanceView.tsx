@@ -25,7 +25,7 @@ const ManagerAttendanceView: React.FC<Props> = ({ managerId, employees, attendan
     const daysInMonth = new Date(year, month, 0).getDate();
     const dayNames = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
     
-    // Jika melihat semua staf, kita hanya tampilkan record yang ada
+    // Jika melihat semua staf, kita hanya tampilkan record yang ada (Active Logs)
     if (selectedEmployeeId === 'all') {
       const filtered = attendance.filter(att => {
         const isSubordinate = subordinates.some(s => s.id === att.employeeId);
@@ -34,22 +34,26 @@ const ManagerAttendanceView: React.FC<Props> = ({ managerId, employees, attendan
       
       return filtered.map(att => {
         const emp = subordinates.find(s => s.id === att.employeeId);
-        // Recalculate shifts for display if needed or trust record
         const dateObj = new Date(att.date);
         const dayName = dayNames[dateObj.getDay()];
         const schedule = getScheduleForDate(att.date, dayName, schedules);
+        const isWeekend = dateObj.getDay() === 0 || dateObj.getDay() === 6;
+        const holiday = holidays.find(h => h.date === att.date);
         
+        // Logika override jika lembur di hari libur
+        const isHolidayWork = isWeekend || holiday;
+
         return {
           ...att,
-          shiftIn: schedule.shiftIn,
-          shiftOut: schedule.shiftOut,
-          remarks: `${att.remarks}${emp ? ` (${emp.name})` : ''}`
+          shiftIn: isHolidayWork ? '--:--' : schedule.shiftIn,
+          shiftOut: isHolidayWork ? '--:--' : schedule.shiftOut,
+          isLate: isHolidayWork ? false : att.isLate,
+          remarks: isHolidayWork ? `Hadir (Lembur) - ${emp?.name}` : `${att.remarks}${emp ? ` (${emp.name})` : ''}`
         };
       });
     }
 
     // Jika melihat spesifik 1 pegawai, tampilkan kalender lengkap
-    const emp = subordinates.find(s => s.id === selectedEmployeeId);
     const fullMonthData: AttendanceRecord[] = [];
 
     for (let d = 1; d <= daysInMonth; d++) {
@@ -63,11 +67,17 @@ const ManagerAttendanceView: React.FC<Props> = ({ managerId, employees, attendan
       const schedule = getScheduleForDate(dateStr, dayName, schedules);
 
       if (existingRecord) {
-        fullMonthData.push({
-          ...existingRecord,
-          shiftIn: schedule.shiftIn,
-          shiftOut: schedule.shiftOut
-        });
+        let finalRecord = { ...existingRecord };
+        if (isWeekend || holiday) {
+             finalRecord.isLate = false;
+             finalRecord.remarks = existingRecord.remarks.includes('Terlambat') ? 'Hadir (Lembur)' : existingRecord.remarks;
+             finalRecord.shiftIn = '--:--';
+             finalRecord.shiftOut = '--:--';
+        } else {
+             finalRecord.shiftIn = schedule.shiftIn;
+             finalRecord.shiftOut = schedule.shiftOut;
+        }
+        fullMonthData.push(finalRecord);
       } else {
         fullMonthData.push({
           id: `empty-${dateStr}`,
