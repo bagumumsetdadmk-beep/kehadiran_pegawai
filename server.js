@@ -37,7 +37,6 @@ if (!process.env.SUPABASE_URL || !process.env.SUPABASE_KEY) {
 }
 
 // --- SETUP DEPENDENCIES ---
-// Gunakan createRequire hanya untuk library yang belum support ESM (seperti node-zklib lama)
 const require = createRequire(import.meta.url);
 let ZKLib;
 try {
@@ -50,8 +49,17 @@ try {
 const app = express();
 const PORT = 3001;
 
-app.use(cors());
+// Allow All CORS
+app.use(cors({ origin: '*' }));
 app.use(express.json());
+
+// Global Error Handlers (Prevent Crash)
+process.on('uncaughtException', (err) => {
+    console.error('[FATAL] Uncaught Exception:', err);
+});
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('[FATAL] Unhandled Rejection:', reason);
+});
 
 // Konfigurasi Supabase
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
@@ -72,32 +80,42 @@ function checkNetworkConnection(host, port, timeout = 2000) {
  * Endpoint: /api/test-connection
  */
 app.post('/api/test-connection', async (req, res) => {
-    const { ips, port, commKey } = req.body;
-    
-    console.log(`[TEST] Menerima request tes koneksi ke: ${ips.join(', ')}`);
-
-    let successCount = 0;
-
-    for (const ip of ips) {
-        // 1. Cek Jaringan
-        const isReachable = await checkNetworkConnection(ip, port);
-        if (!isReachable) continue;
-
-        // 2. Cek Protokol ZK
-        const zk = new ZKLib(ip, port, 5000, 4000);
-        try {
-            await zk.createSocket();
-            await zk.disconnect();
-            successCount++;
-        } catch (e) {
-            console.error(`[TEST] Gagal konek ke ${ip}:`, e.message);
+    try {
+        const { ips, port, commKey } = req.body;
+        
+        if (!ips || !Array.isArray(ips) || ips.length === 0) {
+            return res.status(400).json({ message: "IP Address tidak valid atau kosong." });
         }
-    }
 
-    if (successCount > 0) {
-        res.status(200).json({ message: "Connected", detail: `${successCount} mesin terhubung.` });
-    } else {
-        res.status(500).json({ message: "Failed", detail: "Tidak ada mesin yang dapat dijangkau." });
+        console.log(`[TEST] Menerima request tes koneksi ke: ${ips.join(', ')}`);
+
+        let successCount = 0;
+
+        for (const ip of ips) {
+            // 1. Cek Jaringan
+            const isReachable = await checkNetworkConnection(ip, port);
+            if (!isReachable) continue;
+
+            // 2. Cek Protokol ZK
+            const zk = new ZKLib(ip, port, 5000, 4000);
+            try {
+                await zk.createSocket();
+                await zk.disconnect();
+                successCount++;
+            } catch (e) {
+                console.error(`[TEST] Gagal konek ke ${ip}:`, e.message);
+                // Jangan throw error, lanjut ke IP berikutnya
+            }
+        }
+
+        if (successCount > 0) {
+            res.status(200).json({ message: "Connected", detail: `${successCount} mesin terhubung.` });
+        } else {
+            res.status(500).json({ message: "Failed", detail: "Tidak ada mesin yang dapat dijangkau." });
+        }
+    } catch (err) {
+        console.error("[TEST] Internal Error:", err);
+        res.status(500).json({ message: "Internal Server Error", error: err.message });
     }
 });
 
@@ -105,75 +123,89 @@ app.post('/api/test-connection', async (req, res) => {
  * Endpoint: /api/sync-logs
  */
 app.post('/api/sync-logs', async (req, res) => {
-    const { ips, port, commKey } = req.body;
-    console.log(`[SYNC] Memulai sinkronisasi manual...`);
-
-    let totalLogs = [];
-
-    for (const ip of ips) {
-        if (!await checkNetworkConnection(ip, port)) {
-            console.log(`[SYNC] Skip ${ip} (Unreachable)`);
-            continue;
+    try {
+        const { ips, port, commKey } = req.body;
+        
+        if (!ips || !Array.isArray(ips)) {
+             return res.status(400).json({ message: "IP Address tidak valid." });
         }
 
-        const zk = new ZKLib(ip, port, 10000, 4000);
-        try {
-            await zk.createSocket();
-            const logs = await zk.getAttendances();
-            
-            const formattedLogs = logs.map(log => {
-                const logTime = new Date(log.recordTime);
-                const dateStr = logTime.toISOString().split('T')[0];
-                const timeStr = logTime.toTimeString().split(' ')[0].substring(0, 5); 
-                const isMorning = logTime.getHours() < 12;
+        console.log(`[SYNC] Memulai sinkronisasi manual...`);
 
-                return {
-                    fingerprint_id: String(log.deviceUserId),
-                    date: dateStr,
-                    check_in: isMorning ? timeStr : null,
-                    check_out: !isMorning ? timeStr : null
-                };
-            });
+        let totalLogs = [];
 
-            for (const log of formattedLogs) {
-                const { error } = await supabase
-                    .from('attendance_logs')
-                    .upsert({
-                        fingerprint_id: log.fingerprint_id,
-                        date: log.date,
-                        ...(log.check_in ? { check_in: log.check_in } : {}),
-                        ...(log.check_out ? { check_out: log.check_out } : {})
-                    }, { onConflict: 'fingerprint_id, date' });
+        for (const ip of ips) {
+            if (!await checkNetworkConnection(ip, port)) {
+                console.log(`[SYNC] Skip ${ip} (Unreachable)`);
+                continue;
             }
 
-            totalLogs = [...totalLogs, ...formattedLogs];
-            await zk.disconnect();
-            console.log(`[SYNC] ${ip}: ${logs.length} data ditarik.`);
+            const zk = new ZKLib(ip, port, 10000, 4000);
+            try {
+                await zk.createSocket();
+                const logs = await zk.getAttendances();
+                
+                const formattedLogs = logs.map(log => {
+                    const logTime = new Date(log.recordTime);
+                    const dateStr = logTime.toISOString().split('T')[0];
+                    const timeStr = logTime.toTimeString().split(' ')[0].substring(0, 5); 
+                    const isMorning = logTime.getHours() < 12;
 
-        } catch (e) {
-            console.error(`[SYNC] Error pada ${ip}:`, e.message);
+                    return {
+                        fingerprint_id: String(log.deviceUserId),
+                        date: dateStr,
+                        check_in: isMorning ? timeStr : null,
+                        check_out: !isMorning ? timeStr : null
+                    };
+                });
+
+                for (const log of formattedLogs) {
+                    const { error } = await supabase
+                        .from('attendance_logs')
+                        .upsert({
+                            fingerprint_id: log.fingerprint_id,
+                            date: log.date,
+                            ...(log.check_in ? { check_in: log.check_in } : {}),
+                            ...(log.check_out ? { check_out: log.check_out } : {})
+                        }, { onConflict: 'fingerprint_id, date' });
+                }
+
+                totalLogs = [...totalLogs, ...formattedLogs];
+                await zk.disconnect();
+                console.log(`[SYNC] ${ip}: ${logs.length} data ditarik.`);
+
+            } catch (e) {
+                console.error(`[SYNC] Error pada ${ip}:`, e.message);
+            }
         }
+
+        // Return Mock data/Response even if empty to prevent frontend error
+        const responseData = totalLogs.length > 0 ? totalLogs.map((log, idx) => ({
+            id: `sync-${Date.now()}-${idx}`,
+            employeeId: 'unknown',
+            date: log.date,
+            day: new Date(log.date).toLocaleDateString('id-ID', { weekday: 'long' }),
+            shiftIn: '08:00',
+            fingerprintIn: log.check_in || null,
+            shiftOut: '17:00',
+            fingerprintOut: log.check_out || null,
+            remarks: 'Baru Disinkronisasi',
+            isLate: false
+        })) : [];
+
+        res.status(200).json(responseData);
+
+    } catch (err) {
+        console.error("[SYNC] Internal Error:", err);
+        res.status(500).json({ message: "Internal Server Error", error: err.message });
     }
-
-    const responseData = totalLogs.map((log, idx) => ({
-        id: `sync-${Date.now()}-${idx}`,
-        employeeId: 'unknown',
-        date: log.date,
-        day: new Date(log.date).toLocaleDateString('id-ID', { weekday: 'long' }),
-        shiftIn: '08:00',
-        fingerprintIn: log.check_in || null,
-        shiftOut: '17:00',
-        fingerprintOut: log.check_out || null,
-        remarks: 'Baru Disinkronisasi',
-        isLate: false
-    }));
-
-    res.status(200).json(responseData);
 });
 
-app.listen(PORT, () => {
+// Bind to 0.0.0.0 to accept connections from other devices/IPs
+app.listen(PORT, '0.0.0.0', () => {
     console.log(`
     🚀 Server Middleware Berjalan di http://localhost:${PORT}
+    🚀 Bisa diakses via IP LAN (Misal: http://192.168.1.x:${PORT})
     -----------------------------------------------------
     Env Check: OK
     `);

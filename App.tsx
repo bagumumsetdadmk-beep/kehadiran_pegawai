@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { 
   CalendarCheck, 
@@ -76,7 +75,7 @@ const App: React.FC = () => {
         const { data: dbEmployees, error: empError } = await supabase.from('employees').select('*');
         let currentEmployees = employees; 
 
-        if (!empError && dbEmployees && dbEmployees.length > 0) {
+        if (!empError && dbEmployees) {
           const mappedEmployees: Employee[] = dbEmployees.map((e: any) => ({
             id: e.id,
             nip: e.nip,
@@ -90,6 +89,17 @@ const App: React.FC = () => {
             photoUrl: e.photo_url || `https://i.pravatar.cc/150?u=${e.nip}`,
             fingerprintId: e.fingerprint_id
           }));
+
+          // --- FIX: Pastikan ADMIN001 selalu ada (Fallback Admin) ---
+          // Jika database kosong atau belum ada admin, ambil dari Mock Data agar user bisa login
+          const adminExists = mappedEmployees.some(e => e.nip === 'ADMIN001');
+          if (!adminExists) {
+            const fallbackAdmin = MOCK_EMPLOYEES.find(e => e.nip === 'ADMIN001');
+            if (fallbackAdmin) {
+              mappedEmployees.unshift(fallbackAdmin);
+            }
+          }
+
           setEmployees(mappedEmployees);
           currentEmployees = mappedEmployees;
         }

@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { 
   Building2, 
@@ -120,6 +119,13 @@ const SystemConfigView: React.FC<Props> = ({
   const [connectionStatus, setConnectionStatus] = useState<'idle' | 'success' | 'failed' | 'middleware_error'>('idle');
 
   const weekDays = ['Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu', 'Minggu'];
+
+  // Helper: Get API URL based on current hostname to support LAN access
+  const getApiUrl = (endpoint: string) => {
+    const hostname = window.location.hostname;
+    // Assume middleware is running on port 3001 on the same host
+    return `http://${hostname}:3001${endpoint}`;
+  };
 
   // Effect untuk cek koneksi database saat load
   useEffect(() => {
@@ -245,10 +251,19 @@ const SystemConfigView: React.FC<Props> = ({
     setIsTestingConnection(true);
     setConnectionStatus('idle');
 
-    const ips = localMachineConfig.ipAddress.split(',').map(i => i.trim());
+    const ips = localMachineConfig.ipAddress.split(',').map(i => i.trim()).filter(i => i.length > 0);
+    
+    if (ips.length === 0) {
+        alert("Mohon isi IP Address terlebih dahulu.");
+        setIsTestingConnection(false);
+        return;
+    }
 
     try {
-      const response = await fetch('http://localhost:3001/api/test-connection', {
+      const apiUrl = getApiUrl('/api/test-connection');
+      console.log("Connecting to:", apiUrl);
+
+      const response = await fetch(apiUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -279,10 +294,19 @@ const SystemConfigView: React.FC<Props> = ({
     if (!onSyncAttendance) return;
     setIsSyncing(true);
     
-    const ips = localMachineConfig.ipAddress.split(',').map(i => i.trim());
+    const ips = localMachineConfig.ipAddress.split(',').map(i => i.trim()).filter(i => i.length > 0);
+    
+    if (ips.length === 0) {
+        alert("Mohon isi IP Address.");
+        setIsSyncing(false);
+        return;
+    }
 
     try {
-      const response = await fetch('http://localhost:3001/api/sync-logs', {
+      const apiUrl = getApiUrl('/api/sync-logs');
+      console.log("Syncing from:", apiUrl);
+
+      const response = await fetch(apiUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -306,7 +330,7 @@ const SystemConfigView: React.FC<Props> = ({
       }
     } catch (error) {
       console.error("Sync error:", error);
-      alert("Gagal menghubungi server middleware. Pastikan server (server.js) sudah berjalan.");
+      alert(`Gagal menghubungi server middleware di ${window.location.hostname}:3001.`);
     } finally {
       setIsSyncing(false);
     }
@@ -600,7 +624,8 @@ const SystemConfigView: React.FC<Props> = ({
 
              {connectionStatus === 'middleware_error' && (
                 <div className="p-3 bg-rose-50 text-rose-700 rounded-xl text-xs font-medium border border-rose-100">
-                   <strong>Error:</strong> Tidak bisa menghubungi server middleware. Pastikan Anda telah menjalankan <code>node server.js</code> di komputer ini.
+                   <strong>Error:</strong> Tidak bisa menghubungi server middleware di <code>{window.location.hostname}:3001</code>. 
+                   <br/>Pastikan Anda telah menjalankan <code>node server.js</code> (di port 3001) dan firewall tidak memblokir.
                 </div>
              )}
           </div>
