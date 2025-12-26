@@ -122,7 +122,8 @@ const SystemConfigView: React.FC<Props> = ({
 
   // Helper: Get API URL based on current hostname to support LAN access
   const getApiUrl = (endpoint: string) => {
-    const hostname = window.location.hostname;
+    // Fallback to localhost if hostname is missing (fixes: Failed to parse URL from http://:3001/...)
+    const hostname = window.location.hostname || 'localhost';
     // Assume middleware is running on port 3001 on the same host
     return `http://${hostname}:3001${endpoint}`;
   };
