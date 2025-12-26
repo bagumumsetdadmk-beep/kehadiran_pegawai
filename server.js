@@ -1,39 +1,55 @@
-
 import { createRequire } from 'module';
 import { fileURLToPath } from 'url';
 import path from 'path';
+import fs from 'fs';
+import express from 'express';
+import cors from 'cors';
+import { createClient } from '@supabase/supabase-js';
+import net from 'net';
+import dotenv from 'dotenv';
 
-// --- JEMBATAN KOMPATIBILITAS (ESM ke CommonJS) ---
-const require = createRequire(import.meta.url);
+// --- KONFIGURASI PATH & ENV ---
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-// -------------------------------------------------
+const envPath = path.resolve(__dirname, '.env');
 
-/**
- * server.js
- * Middleware API untuk AbsensiPintar
- */
+console.log(`[INIT] Memeriksa file .env di: ${envPath}`);
 
-// Memaksa dotenv membaca file .env di folder yang sama dengan server.js
-require('dotenv').config({ path: path.resolve(__dirname, '.env') });
+if (fs.existsSync(envPath)) {
+    const result = dotenv.config({ path: envPath });
+    if (result.error) {
+        console.error(`[INIT] Error parsing .env file:`, result.error);
+    } else {
+        console.log(`[INIT] Berhasil memuat .env. Variabel yang ditemukan:`, Object.keys(result.parsed || {}));
+    }
+} else {
+    console.error(`[INIT] FATAL: File .env TIDAK DITEMUKAN di ${envPath}`);
+}
 
-const express = require('express');
-const cors = require('cors');
-const ZKLib = require('node-zklib');
-const { createClient } = require('@supabase/supabase-js');
-const net = require('net');
+// Validasi Env
+if (!process.env.SUPABASE_URL || !process.env.SUPABASE_KEY) {
+    console.error("[FATAL] SUPABASE_URL atau SUPABASE_KEY kosong. Cek isi file .env Anda.");
+    console.error("Isi process.env saat ini (sebagian):", {
+        NODE_ENV: process.env.NODE_ENV,
+        PWD: process.env.PWD
+    });
+    process.exit(1);
+}
+
+// --- SETUP DEPENDENCIES ---
+// Gunakan createRequire hanya untuk library yang belum support ESM (seperti node-zklib lama)
+const require = createRequire(import.meta.url);
+let ZKLib;
+try {
+    ZKLib = require('node-zklib');
+} catch (e) {
+    console.error("[INIT] Gagal load node-zklib. Pastikan sudah 'npm install node-zklib'");
+    process.exit(1);
+}
 
 const app = express();
 const PORT = 3001;
 
-// Cek apakah Env terbaca
-if (!process.env.SUPABASE_URL || !process.env.SUPABASE_KEY) {
-    console.error("FATAL ERROR: SUPABASE_URL atau SUPABASE_KEY tidak terbaca dari .env");
-    console.error("Pastikan file .env ada di folder: " + path.resolve(__dirname, '.env'));
-    process.exit(1);
-}
-
-// Middleware
 app.use(cors());
 app.use(express.json());
 
@@ -159,6 +175,6 @@ app.listen(PORT, () => {
     console.log(`
     🚀 Server Middleware Berjalan di http://localhost:${PORT}
     -----------------------------------------------------
-    Status ENV: OK (URL Supabase Terbaca)
+    Env Check: OK
     `);
 });

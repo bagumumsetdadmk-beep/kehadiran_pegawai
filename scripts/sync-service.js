@@ -1,34 +1,46 @@
-
 import { createRequire } from 'module';
 import { fileURLToPath } from 'url';
 import path from 'path';
+import fs from 'fs';
+import { createClient } from '@supabase/supabase-js';
+import net from 'net';
+import dotenv from 'dotenv';
 
-// --- JEMBATAN KOMPATIBILITAS (ESM ke CommonJS) ---
-const require = createRequire(import.meta.url);
+// --- KONFIGURASI PATH & ENV ---
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-// -------------------------------------------------
+// File ini ada di /scripts, jadi .env ada di satu level di atasnya
+const envPath = path.resolve(__dirname, '../.env');
 
-/**
- * scripts/sync-service.js
- * Service Background untuk Sinkronisasi Otomatis
- */
+console.log(`[SYNC-SERVICE] Memeriksa file .env di: ${envPath}`);
 
-// Karena file ini ada di folder /scripts, kita harus mundur satu level (../) untuk mencari .env di root
-require('dotenv').config({ path: path.resolve(__dirname, '../.env') });
+if (fs.existsSync(envPath)) {
+    const result = dotenv.config({ path: envPath });
+    if (result.error) {
+        console.error(`[SYNC-SERVICE] Error parsing .env file:`, result.error);
+    } else {
+        console.log(`[SYNC-SERVICE] Berhasil memuat .env.`);
+    }
+} else {
+    console.error(`[SYNC-SERVICE] FATAL: File .env TIDAK DITEMUKAN di ${envPath}`);
+}
 
-const ZKLib = require('node-zklib');
-const { createClient } = require('@supabase/supabase-js');
-const net = require('net');
-
-// Cek Environment
 if (!process.env.SUPABASE_URL || !process.env.SUPABASE_KEY) {
-    console.error("FATAL ERROR: SUPABASE_URL atau SUPABASE_KEY tidak terbaca.");
-    console.error("Mencoba membaca .env dari: " + path.resolve(__dirname, '../.env'));
+    console.error("[FATAL] SUPABASE_URL atau SUPABASE_KEY kosong/tidak terbaca.");
     process.exit(1);
 }
 
-// --- KONFIGURASI ---
+// --- SETUP DEPENDENCIES ---
+const require = createRequire(import.meta.url);
+let ZKLib;
+try {
+    ZKLib = require('node-zklib');
+} catch (e) {
+    console.error("[SYNC-SERVICE] Gagal load node-zklib. Jalankan 'npm install node-zklib'");
+    process.exit(1);
+}
+
+// --- KONFIGURASI SUPABASE ---
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 
 // Fungsi Helper: Cek apakah IP & Port bisa dijangkau (Ping TCP)
