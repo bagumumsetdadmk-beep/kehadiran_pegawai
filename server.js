@@ -1,12 +1,19 @@
 
+import { createRequire } from 'module';
+import { fileURLToPath } from 'url';
+import path from 'path';
+
+// --- JEMBATAN KOMPATIBILITAS (ESM ke CommonJS) ---
+const require = createRequire(import.meta.url);
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+// -------------------------------------------------
+
 /**
  * server.js
  * Middleware API untuk AbsensiPintar
- * 
- * Update: Fix Path .env untuk PM2
  */
 
-const path = require('path');
 // Memaksa dotenv membaca file .env di folder yang sama dengan server.js
 require('dotenv').config({ path: path.resolve(__dirname, '.env') });
 

@@ -1,12 +1,19 @@
 
+import { createRequire } from 'module';
+import { fileURLToPath } from 'url';
+import path from 'path';
+
+// --- JEMBATAN KOMPATIBILITAS (ESM ke CommonJS) ---
+const require = createRequire(import.meta.url);
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+// -------------------------------------------------
+
 /**
  * scripts/sync-service.js
  * Service Background untuk Sinkronisasi Otomatis
- * 
- * Update: Fix Path .env (Mundur satu folder ke root)
  */
 
-const path = require('path');
 // Karena file ini ada di folder /scripts, kita harus mundur satu level (../) untuk mencari .env di root
 require('dotenv').config({ path: path.resolve(__dirname, '../.env') });
 
