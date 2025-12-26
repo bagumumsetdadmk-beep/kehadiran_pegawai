@@ -47,7 +47,8 @@ try {
 }
 
 const app = express();
-const PORT = 3001;
+// CHANGED: Port 3006 to ensure clean start and avoid 3001/3005 conflicts
+const PORT = 3006;
 
 // Allow All CORS
 app.use(cors({ origin: '*' }));
@@ -55,8 +56,22 @@ app.use(express.json());
 
 // Global Error Handlers (Prevent Crash)
 process.on('uncaughtException', (err) => {
-    console.error('[FATAL] Uncaught Exception:', err);
+    if (err.code === 'EADDRINUSE') {
+        console.error(`
+        [FATAL ERROR] Port ${PORT} sedang digunakan oleh aplikasi lain!
+        -------------------------------------------------------------
+        Mungkin 'Laravel Herd', 'Valet', atau server Node.js lain sedang berjalan.
+        
+        SOLUSI:
+        1. Matikan aplikasi lain yang menggunakan port ${PORT}.
+        2. Atau ganti 'const PORT = ${PORT}' di file ini ke angka lain (misal 3007).
+        `);
+        process.exit(1);
+    } else {
+        console.error('[FATAL] Uncaught Exception:', err);
+    }
 });
+
 process.on('unhandledRejection', (reason, promise) => {
     console.error('[FATAL] Unhandled Rejection:', reason);
 });
@@ -75,6 +90,18 @@ function checkNetworkConnection(host, port, timeout = 2000) {
         socket.connect(port, host);
     });
 }
+
+/**
+ * Root Route: Visual Check if server is running
+ */
+app.get('/', (req, res) => {
+    res.send(`
+        <h1>AbsensiPintar Middleware Running</h1>
+        <p>Server status: <strong>ONLINE</strong></p>
+        <p>Port: ${PORT}</p>
+        <p>Time: ${new Date().toLocaleString()}</p>
+    `);
+});
 
 /**
  * Endpoint: /api/test-connection
@@ -202,11 +229,21 @@ app.post('/api/sync-logs', async (req, res) => {
 });
 
 // Bind to 0.0.0.0 to accept connections from other devices/IPs
-app.listen(PORT, '0.0.0.0', () => {
+const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`
     🚀 Server Middleware Berjalan di http://localhost:${PORT}
     🚀 Bisa diakses via IP LAN (Misal: http://192.168.1.x:${PORT})
     -----------------------------------------------------
     Env Check: OK
     `);
+});
+
+server.on('error', (e) => {
+    if (e.code === 'EADDRINUSE') {
+        console.error(`
+        [FATAL ERROR] Port ${PORT} sedang digunakan!
+        Matikan aplikasi lain atau ganti PORT di server.js
+        `);
+        process.exit(1);
+    }
 });

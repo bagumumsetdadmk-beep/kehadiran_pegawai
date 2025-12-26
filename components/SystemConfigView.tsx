@@ -9,25 +9,25 @@ import {
   X, 
   LayoutGrid, 
   Plus, 
-  Trash2,
-  CalendarCheck2,
-  FileSpreadsheet,
-  User,
-  Download,
-  Users,
-  Clock,
-  CalendarRange,
-  Edit,
-  RotateCcw,
-  Server,
-  Wifi,
-  RefreshCw,
-  Power,
-  Database,
-  ArrowDownToLine,
-  Link,
-  Unplug,
-  Eye,
+  Trash2, 
+  CalendarCheck2, 
+  FileSpreadsheet, 
+  User, 
+  Download, 
+  Users, 
+  Clock, 
+  CalendarRange, 
+  Edit, 
+  RotateCcw, 
+  Server, 
+  Wifi, 
+  RefreshCw, 
+  Power, 
+  Database, 
+  ArrowDownToLine, 
+  Link, 
+  Unplug, 
+  Eye, 
   EyeOff
 } from 'lucide-react';
 import { AttendanceRecord, Employee, Holiday, WorkSchedule, FingerprintMachine, OrganizationProfile } from '../types';
@@ -55,21 +55,21 @@ interface Props {
 
 const SystemConfigView: React.FC<Props> = ({ 
   onImportFingerprint, 
-  opdProfile,
-  onUpdateOpdProfile,
-  subBagianList,
-  employees,
-  attendance,
-  holidays,
-  schedules = [],
-  machineConfig,
-  onAddSubBagian,
-  onDeleteSubBagian,
-  onAddSchedule,
-  onUpdateSchedule,
-  onDeleteSchedule,
-  onUpdateMachine,
-  onSyncAttendance
+  opdProfile, 
+  onUpdateOpdProfile, 
+  subBagianList, 
+  employees, 
+  attendance, 
+  holidays, 
+  schedules = [], 
+  machineConfig, 
+  onAddSubBagian, 
+  onDeleteSubBagian, 
+  onAddSchedule, 
+  onUpdateSchedule, 
+  onDeleteSchedule, 
+  onUpdateMachine, 
+  onSyncAttendance 
 }) => {
   const [localOpdInfo, setLocalOpdInfo] = useState<OrganizationProfile>(opdProfile);
   const [newSubBagian, setNewSubBagian] = useState('');
@@ -118,15 +118,43 @@ const SystemConfigView: React.FC<Props> = ({
   const [isSyncing, setIsSyncing] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState<'idle' | 'success' | 'failed' | 'middleware_error'>('idle');
 
-  const weekDays = ['Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu', 'Minggu'];
+  // Middleware URL Configuration (Editable by user)
+  const [middlewareUrl, setMiddlewareUrl] = useState(() => {
+    // Priority: LocalStorage > Dynamic Hostname > Localhost Fallback
+    let url = localStorage.getItem('MW_URL');
+    
+    // AUTO-CORRECT Logic
+    if (url) {
+        let updated = false;
+        // 1. Fix IPv6 Issue: localhost -> 127.0.0.1
+        if (url.includes('//localhost')) {
+            url = url.replace('//localhost', '//127.0.0.1');
+            updated = true;
+        }
+        // 2. Fix Port Conflict: 3001 or 3005 -> 3006
+        if (url.includes(':3001')) {
+            url = url.replace(':3001', ':3006');
+            updated = true;
+        }
+        if (url.includes(':3005')) {
+            url = url.replace(':3005', ':3006');
+            updated = true;
+        }
 
-  // Helper: Get API URL based on current hostname to support LAN access
-  const getApiUrl = (endpoint: string) => {
-    // Fallback to localhost if hostname is missing (fixes: Failed to parse URL from http://:3001/...)
-    const hostname = window.location.hostname || 'localhost';
-    // Assume middleware is running on port 3001 on the same host
-    return `http://${hostname}:3001${endpoint}`;
-  };
+        if (updated) {
+            localStorage.setItem('MW_URL', url);
+        }
+    }
+
+    if (url) return url;
+    
+    const hostname = window.location.hostname;
+    const effectiveHost = (!hostname || hostname === 'localhost') ? '127.0.0.1' : hostname;
+    // Default Port is now 3006
+    return `http://${effectiveHost}:3006`;
+  });
+
+  const weekDays = ['Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu', 'Minggu'];
 
   // Effect untuk cek koneksi database saat load
   useEffect(() => {
@@ -261,8 +289,15 @@ const SystemConfigView: React.FC<Props> = ({
     }
 
     try {
-      const apiUrl = getApiUrl('/api/test-connection');
+      // Pastikan URL valid dan bersih
+      const baseUrl = middlewareUrl.trim().replace(/\/$/, '');
+      const apiUrl = `${baseUrl}/api/test-connection`;
       console.log("Connecting to:", apiUrl);
+
+      // Gunakan AbortController untuk timeout jika server hang/firewalled
+      // UPDATE: Tingkatkan timeout ke 15 detik (15000ms) untuk mengakomodasi scan banyak IP yang offline
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 15000); 
 
       const response = await fetch(apiUrl, {
         method: 'POST',
@@ -274,7 +309,10 @@ const SystemConfigView: React.FC<Props> = ({
           port: parseInt(localMachineConfig.port),
           commKey: parseInt(localMachineConfig.commKey)
         }),
+        signal: controller.signal
       });
+
+      clearTimeout(timeoutId);
 
       if (response.ok) {
         setConnectionStatus('success');
@@ -304,9 +342,11 @@ const SystemConfigView: React.FC<Props> = ({
     }
 
     try {
-      const apiUrl = getApiUrl('/api/sync-logs');
+      const baseUrl = middlewareUrl.trim().replace(/\/$/, '');
+      const apiUrl = `${baseUrl}/api/sync-logs`;
       console.log("Syncing from:", apiUrl);
 
+      // Sync bisa memakan waktu lama jika banyak data
       const response = await fetch(apiUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -331,10 +371,18 @@ const SystemConfigView: React.FC<Props> = ({
       }
     } catch (error) {
       console.error("Sync error:", error);
-      alert(`Gagal menghubungi server middleware di ${window.location.hostname}:3001.`);
+      alert(`Gagal menghubungi server middleware di ${middlewareUrl}. Pastikan server berjalan.`);
     } finally {
       setIsSyncing(false);
     }
+  };
+
+  const handleResetMiddlewareUrl = () => {
+      const hostname = window.location.hostname;
+      const effectiveHost = (!hostname || hostname === 'localhost') ? '127.0.0.1' : hostname;
+      const defaultUrl = `http://${effectiveHost}:3006`;
+      setMiddlewareUrl(defaultUrl);
+      localStorage.setItem('MW_URL', defaultUrl);
   };
 
   const handleExportMonthlyAll = () => {
@@ -349,7 +397,7 @@ const SystemConfigView: React.FC<Props> = ({
       dataToExport, 
       attendance, 
       exportMonth, 
-      opdProfile.name,
+      opdProfile.name, 
       exportCategory
     );
   };
@@ -394,6 +442,8 @@ const SystemConfigView: React.FC<Props> = ({
     }
     exportAttendanceToExcel(fullMonthData, `Laporan_${employee.name.replace(/\s+/g, '_')}_${exportMonth}`);
   };
+
+  const isHttps = typeof window !== 'undefined' && window.location.protocol === 'https:';
 
   return (
     <div className="space-y-8 animate-in fade-in duration-500 pb-20">
@@ -595,6 +645,26 @@ const SystemConfigView: React.FC<Props> = ({
                       <input type="password" className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-emerald-500 font-mono" value={localMachineConfig.commKey} onChange={(e) => setLocalMachineConfig({...localMachineConfig, commKey: e.target.value})} />
                    </div>
                 </div>
+                
+                {/* Middleware URL Configuration */}
+                <div className="space-y-1.5 pt-2 border-t border-slate-100">
+                   <div className="flex justify-between items-center">
+                      <label className="text-[10px] font-bold text-slate-500 uppercase">URL Server Middleware (Backend)</label>
+                      <button onClick={handleResetMiddlewareUrl} className="text-[9px] font-bold text-indigo-600 hover:text-indigo-800 flex items-center gap-1">
+                         <RotateCcw size={10} /> Reset Default
+                      </button>
+                   </div>
+                   <input 
+                     type="text" 
+                     className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2 text-xs font-mono text-slate-600 focus:ring-2 focus:ring-slate-400 outline-none" 
+                     value={middlewareUrl} 
+                     onChange={(e) => {
+                       setMiddlewareUrl(e.target.value);
+                       localStorage.setItem('MW_URL', e.target.value);
+                     }} 
+                   />
+                   <p className="text-[9px] text-slate-400">Pastikan <code>node server.js</code> berjalan. Gunakan 127.0.0.1 jika localhost bermasalah.</p>
+                </div>
              </div>
              
              <div className="grid grid-cols-2 gap-3 pt-2">
@@ -625,8 +695,17 @@ const SystemConfigView: React.FC<Props> = ({
 
              {connectionStatus === 'middleware_error' && (
                 <div className="p-3 bg-rose-50 text-rose-700 rounded-xl text-xs font-medium border border-rose-100">
-                   <strong>Error:</strong> Tidak bisa menghubungi server middleware di <code>{window.location.hostname}:3001</code>. 
-                   <br/>Pastikan Anda telah menjalankan <code>node server.js</code> (di port 3001) dan firewall tidak memblokir.
+                   <strong>Error:</strong> Tidak bisa menghubungi server middleware di <code>{middlewareUrl}</code>. 
+                   <br/>1. Pastikan Anda telah menjalankan <code>node server.js</code> di terminal terpisah.
+                   <br/>2. Pastikan port 3006 (default) tidak digunakan aplikasi lain.
+                   <br/>3. Jika menggunakan 'localhost', coba ganti URL diatas menjadi 'http://127.0.0.1:3006'.
+                   
+                   {isHttps && (
+                     <div className="mt-2 text-rose-800 border-t border-rose-200 pt-1">
+                        <strong>Perhatian HTTPS:</strong> Anda mengakses web ini via HTTPS. Koneksi ke server lokal (HTTP) mungkin diblokir browser (Mixed Content).
+                        <br/>Solusi: Akses web ini via <code>http://localhost...</code> atau izinkan "Insecure Content" di pengaturan browser.
+                     </div>
+                   )}
                 </div>
              )}
           </div>
