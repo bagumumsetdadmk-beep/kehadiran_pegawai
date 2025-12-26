@@ -1,22 +1,25 @@
 
 /**
- * PENTING: Script ini dijalankan di Komputer Server Kantor (Infinix), BUKAN di Vercel.
+ * scripts/sync-service.js
+ * Service Background untuk Sinkronisasi Otomatis
  * 
- * Cara Install:
- * 1. Pastikan Node.js terinstall di komputer Infinix.
- * 2. Buat folder baru, copy file ini kesana.
- * 3. Buka terminal di folder tersebut, jalankan:
- *    npm install node-zklib @supabase/supabase-js dotenv
- * 4. Buat file .env berisi:
- *    SUPABASE_URL=https://...
- *    SUPABASE_KEY=eyJ...
- * 5. Jalankan script: node sync-service.js
+ * Update: Fix Path .env (Mundur satu folder ke root)
  */
 
-require('dotenv').config();
+const path = require('path');
+// Karena file ini ada di folder /scripts, kita harus mundur satu level (../) untuk mencari .env di root
+require('dotenv').config({ path: path.resolve(__dirname, '../.env') });
+
 const ZKLib = require('node-zklib');
 const { createClient } = require('@supabase/supabase-js');
 const net = require('net');
+
+// Cek Environment
+if (!process.env.SUPABASE_URL || !process.env.SUPABASE_KEY) {
+    console.error("FATAL ERROR: SUPABASE_URL atau SUPABASE_KEY tidak terbaca.");
+    console.error("Mencoba membaca .env dari: " + path.resolve(__dirname, '../.env'));
+    process.exit(1);
+}
 
 // --- KONFIGURASI ---
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
@@ -68,7 +71,6 @@ async function getMachineConfig() {
             };
         }
 
-        // Parsing IP yang dipisahkan koma (contoh: "192.168.1.10, 192.168.1.11")
         const ips = data.ip_addresses.split(',').map(ip => ip.trim()).filter(ip => ip !== '');
         
         return {
@@ -100,14 +102,12 @@ async function syncData() {
     for (const ip of config.ips) {
         console.log(`\n   📡 Menghubungkan ke: ${ip}`);
 
-        // 2. Cek Koneksi Jaringan Dulu (Pre-flight check)
         const isReachable = await checkConnection(ip, config.port);
         if (!isReachable) {
             console.log(`      ❌ SKIP: Mesin tidak dapat dijangkau (Ping failed).`);
-            continue; // Lanjut ke IP berikutnya
+            continue; 
         }
 
-        // 3. Jika lolos cek jaringan, baru inisialisasi Library Fingerprint
         const zk = new ZKLib(ip, config.port, 5000, 4000); 
         
         try {
@@ -124,15 +124,13 @@ async function syncData() {
 
             let successCount = 0;
 
-            // Proses setiap log
             for (const log of logs) {
                 const machineUserId = String(log.deviceUserId);
                 const logTime = new Date(log.recordTime);
                 
-                const dateStr = logTime.toISOString().split('T')[0]; // YYYY-MM-DD
-                const timeStr = logTime.toTimeString().split(' ')[0]; // HH:MM:SS
+                const dateStr = logTime.toISOString().split('T')[0]; 
+                const timeStr = logTime.toTimeString().split(' ')[0]; 
                 
-                // Logika Sederhana Shift (Bisa disesuaikan)
                 const isMorning = logTime.getHours() < 12;
 
                 const payload = {

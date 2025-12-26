@@ -51,7 +51,7 @@ export const exportAllEmployeesMonthlyAttendanceExcel = (
     [`LAPORAN REKAPITULASI KEHADIRAN: ${categoryLabel}`],
     [`PERIODE: ${month}`],
     [`WAKTU CETAK: ${new Date().toLocaleString('id-ID')}`],
-    [`Keterangan: ✅ = Hadir, ⛔ = Tidak Hadir`],
+    [`Keterangan: ✔ = Hadir, ─ = Tidak Hadir`],
     [''] // Spasi kosong
   ];
 
@@ -68,7 +68,7 @@ export const exportAllEmployeesMonthlyAttendanceExcel = (
       const dateStr = `${year}-${String(monthNum).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
       const record = attendance.find(a => a.employeeId === emp.id && a.date === dateStr);
       
-      row.push(record && record.fingerprintIn ? '✅' : '⛔');
+      row.push(record && record.fingerprintIn ? '✔' : '─');
     }
     return row;
   });
