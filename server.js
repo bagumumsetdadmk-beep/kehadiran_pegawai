@@ -193,7 +193,15 @@ app.post('/api/sync-logs', async (req, res) => {
         const zk = new ZKLib(ip, port, 10000, 4000); // Extended timeouts for sync
         try {
             await zk.createSocket();
-            const logsFromMachine = await zk.getAttendances();
+            let logsFromMachine = await zk.getAttendances();
+            
+            // --- FIX START ---
+            // Memastikan logsFromMachine adalah array sebelum diproses
+            if (!Array.isArray(logsFromMachine)) {
+                console.warn(`[SYNC] ${ip}: zk.getAttendances() mengembalikan data non-array. Menggunakan array kosong.`);
+                logsFromMachine = [];
+            }
+            // --- FIX END ---
             
             console.log(`[SYNC] ${ip}: Ditemukan ${logsFromMachine.length} log kehadiran.`);
 

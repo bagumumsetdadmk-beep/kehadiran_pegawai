@@ -16,14 +16,14 @@
     "react-dom": "^19.2.3",
     "xlsx": "0.18.5",
     "@supabase/supabase-js": "^2.89.0",
-    "path": "^0.12.7",
-    "express": "^5.2.1",
+    "module": "^2.0.0",
     "url": "^0.11.4",
-    "dotenv": "^17.2.3",
-    "net": "^1.0.2",
-    "cors": "^2.8.5",
+    "path": "^0.12.7",
     "fs": "^0.0.1-security",
-    "module": "^2.0.0"
+    "express": "^5.2.1",
+    "cors": "^2.8.5",
+    "net": "^1.0.2",
+    "dotenv": "^17.2.3"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",
