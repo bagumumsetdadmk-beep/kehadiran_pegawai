@@ -52,7 +52,6 @@ function checkNetworkConnection(host, port, timeout = 3000) {
     });
 }
 
-// Endpoint untuk menghapus seluruh log
 app.post('/api/clear-logs', async (req, res) => {
     console.log("[DANGER] Request: Membersihkan seluruh data attendance_logs...");
     try {
@@ -85,25 +84,21 @@ app.post('/api/test-connection', async (req, res) => {
         try {
             const isReachable = await checkNetworkConnection(ip, port);
             if (!isReachable) {
-                logs.push({ ip, status: 'Offline (Ping Gagal)' });
+                logs.push({ ip, status: 'Offline' });
                 continue;
             }
             
             const zk = new ZKLib(ip, port, 10000, 4000);
             try {
                 await zk.createSocket();
-                let info = "Koneksi OK";
-                if (typeof zk.getTime === 'function') {
-                    try { info = `Waktu: ${await zk.getTime()}`; } catch(e) {}
-                }
-                logs.push({ ip, status: `Online (${info})` });
+                logs.push({ ip, status: `Online` });
                 overallSuccess = true;
                 await zk.disconnect();
             } catch (e) {
-                logs.push({ ip, status: `Error Protokol: ${e.message.substring(0, 30)}` });
+                logs.push({ ip, status: `Error Protokol` });
             }
         } catch (err) {
-            logs.push({ ip, status: 'Error Internal Server' });
+            logs.push({ ip, status: 'Error Internal' });
         }
     }
     res.status(200).json({ success: overallSuccess, logs });
@@ -112,41 +107,27 @@ app.post('/api/test-connection', async (req, res) => {
 app.post('/api/sync-logs', async (req, res) => {
     const { ips, port, targetYear } = req.body;
     let totalLogsFormatted = [];
-    const SYNC_YEAR = parseInt(targetYear) || 2026;
+    const SYNC_YEAR = parseInt(targetYear); // 0 jika 'Semua Tahun'
 
-    console.log(`\n[SYNC] Memulai sinkronisasi untuk tahun: ${SYNC_YEAR}`);
+    console.log(`\n[SYNC] Target Tahun: ${SYNC_YEAR === 0 ? 'SEMUA TAHUN' : SYNC_YEAR}`);
 
-    if (!isZKLibAvailable) return res.status(500).json({ error: 'Library node-zklib tidak terpasang' });
+    if (!isZKLibAvailable) return res.status(500).json({ error: 'Library missing' });
 
     for (const ip of ips) {
-        console.log(`[SYNC] Menghubungi IP: ${ip}...`);
-        
-        if (!await checkNetworkConnection(ip, port)) {
-            console.log(`[SYNC] ${ip}: Gagal (Jaringan tidak terjangkau).`);
-            continue;
-        }
+        if (!await checkNetworkConnection(ip, port)) continue;
 
-        const zk = new ZKLib(ip, port, 30000, 5000);
+        const zk = new ZKLib(ip, port, 40000, 5000);
         try {
             await zk.createSocket();
             
-            let logsFromMachine = null;
-            if (typeof zk.getAttendances === 'function') {
-                logsFromMachine = await zk.getAttendances();
-            } else if (typeof zk.getAttendance === 'function') {
-                logsFromMachine = await zk.getAttendance();
-            }
+            let logsFromMachine = await (zk.getAttendances ? zk.getAttendances() : zk.getAttendance());
+            let rawData = Array.isArray(logsFromMachine) ? logsFromMachine : (logsFromMachine.data || []);
 
-            let rawData = [];
-            if (logsFromMachine && Array.isArray(logsFromMachine)) {
-                rawData = logsFromMachine;
-            } else if (logsFromMachine && logsFromMachine.data && Array.isArray(logsFromMachine.data)) {
-                rawData = logsFromMachine.data;
-            }
+            console.log(`[SYNC] ${ip}: Menarik ${rawData.length} entri total.`);
 
-            console.log(`[SYNC] ${ip}: Menarik ${rawData.length} entri dari mesin.`);
-
+            const yearCounts = {};
             const groupedLogs = {};
+            let processedCount = 0;
             let ignoredCount = 0;
 
             rawData.forEach(log => {
@@ -154,62 +135,45 @@ app.post('/api/sync-logs', async (req, res) => {
                 if (!recordTime) return;
 
                 const logTime = new Date(recordTime);
-                if (isNaN(logTime.getTime())) return;
+                const actualYear = logTime.getFullYear();
+                
+                // Hitung statistik tahun yang ditemukan
+                yearCounts[actualYear] = (yearCounts[actualYear] || 0) + 1;
 
-                // FILTER TAHUN DINAMIS
-                if (logTime.getFullYear() !== SYNC_YEAR) {
+                // Filter Tahun (Kecuali jika SYNC_YEAR adalah 0)
+                if (SYNC_YEAR !== 0 && actualYear !== SYNC_YEAR) {
                     ignoredCount++;
                     return;
                 }
 
+                processedCount++;
                 const dateStr = logTime.toISOString().split('T')[0];
                 const timeStr = logTime.toTimeString().split(' ')[0].substring(0, 5);
                 const isMorning = logTime.getHours() < 12;
                 const userId = String(log.deviceUserId || log.userSn || log.uid);
-                
                 const key = `${userId}_${dateStr}`;
 
                 if (!groupedLogs[key]) {
-                    groupedLogs[key] = {
-                        fingerprint_id: userId,
-                        date: dateStr,
-                        check_in: isMorning ? timeStr : null,
-                        check_out: !isMorning ? timeStr : null
-                    };
+                    groupedLogs[key] = { fingerprint_id: userId, date: dateStr, check_in: isMorning ? timeStr : null, check_out: !isMorning ? timeStr : null };
                 } else {
                     if (isMorning) {
-                        if (!groupedLogs[key].check_in || timeStr < groupedLogs[key].check_in) {
-                            groupedLogs[key].check_in = timeStr;
-                        }
+                        if (!groupedLogs[key].check_in || timeStr < groupedLogs[key].check_in) groupedLogs[key].check_in = timeStr;
                     } else {
-                        if (!groupedLogs[key].check_out || timeStr > groupedLogs[key].check_out) {
-                            groupedLogs[key].check_out = timeStr;
-                        }
+                        if (!groupedLogs[key].check_out || timeStr > groupedLogs[key].check_out) groupedLogs[key].check_out = timeStr;
                     }
                 }
             });
 
+            // LOG DETAIL TAHUN UNTUK USER
+            console.log("[INFO] Ringkasan Tahun di Mesin:");
+            Object.keys(yearCounts).forEach(yr => console.log(`   - Tahun ${yr}: ${yearCounts[yr]} data`));
+            console.log(`[SYNC] Filter: ${processedCount} diproses, ${ignoredCount} diabaikan.`);
+
             const processed = Object.values(groupedLogs);
-            console.log(`[SYNC] Filter Tahun ${SYNC_YEAR}: ${processed.length} data diproses, ${ignoredCount} data tahun lain diabaikan.`);
-
             for (const log of processed) {
-                const { data: existing } = await supabase
-                    .from('attendance_logs')
-                    .select('check_in, check_out')
-                    .eq('fingerprint_id', log.fingerprint_id)
-                    .eq('date', log.date)
-                    .maybeSingle();
-
-                const payload = {
-                    fingerprint_id: log.fingerprint_id,
-                    date: log.date,
-                    check_in: log.check_in || (existing ? existing.check_in : null),
-                    check_out: log.check_out || (existing ? existing.check_out : null)
-                };
-
-                const { error } = await supabase
-                    .from('attendance_logs')
-                    .upsert(payload, { onConflict: 'fingerprint_id, date' });
+                const { data: existing } = await supabase.from('attendance_logs').select('check_in, check_out').eq('fingerprint_id', log.fingerprint_id).eq('date', log.date).maybeSingle();
+                const payload = { fingerprint_id: log.fingerprint_id, date: log.date, check_in: log.check_in || (existing ? existing.check_in : null), check_out: log.check_out || (existing ? existing.check_out : null) };
+                const { error } = await supabase.from('attendance_logs').upsert(payload, { onConflict: 'fingerprint_id, date' });
                 
                 if (!error) {
                     totalLogsFormatted.push({
@@ -221,7 +185,7 @@ app.post('/api/sync-logs', async (req, res) => {
                         fingerprintIn: payload.check_in,
                         shiftOut: '17:00',
                         fingerprintOut: payload.check_out,
-                        remarks: `Sync Tahun ${SYNC_YEAR}`,
+                        remarks: 'Data Sinkronisasi',
                         isLate: payload.check_in ? payload.check_in > '08:05' : false
                     });
                 }
@@ -232,11 +196,10 @@ app.post('/api/sync-logs', async (req, res) => {
             try { await zk.disconnect(); } catch (e) {}
         }
     }
-
     res.status(200).json(totalLogsFormatted);
 });
 
 app.listen(PORT, '0.0.0.0', () => {
-    console.log(`\n[READY] Middleware Absensi Berjalan di Port ${PORT}`);
+    console.log(`\n[READY] Server di Port ${PORT}`);
     console.log(`-----------------------------------------------`);
 });
