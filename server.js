@@ -18,7 +18,7 @@ if (fs.existsSync(envPath)) {
 }
 
 if (!process.env.SUPABASE_URL || !process.env.SUPABASE_KEY) {
-    console.error("[FATAL] SUPABASE_URL atau SUPABASE_KEY tidak ditemukan.");
+    console.error("[FATAL] SUPABASE_URL atau SUPABASE_KEY tidak ditemukan di .env.");
     process.exit(1);
 }
 
@@ -27,8 +27,10 @@ let ZKLib;
 let isZKLibAvailable = true;
 try {
     ZKLib = require('node-zklib');
+    console.log("[INIT] node-zklib terdeteksi.");
 } catch (e) {
     isZKLibAvailable = false;
+    console.error("[INIT] node-zklib TIDAK DITEMUKAN. Jalankan 'npm install node-zklib'.");
 }
 
 const app = express();
@@ -56,7 +58,7 @@ app.post('/api/test-connection', async (req, res) => {
     let overallSuccess = false;
 
     if (!isZKLibAvailable) {
-        ips.forEach(ip => logs.push({ ip, status: 'Simulasi (Lib tidak ada)' }));
+        ips.forEach(ip => logs.push({ ip, status: 'Simulasi (Lib Missing)' }));
         return res.status(200).json({ success: true, status: 'success_simulation', logs });
     }
 
@@ -67,18 +69,27 @@ app.post('/api/test-connection', async (req, res) => {
                 logs.push({ ip, status: 'Offline (Ping Gagal)' });
                 continue;
             }
+            
             const zk = new ZKLib(ip, port, 10000, 4000);
             try {
                 await zk.createSocket();
-                const mTime = await zk.getTime();
-                logs.push({ ip, status: `Online (Waktu: ${mTime})` });
+                
+                // Ambil info dasar dengan aman
+                let info = "Koneksi OK";
+                if (typeof zk.getTime === 'function') {
+                    try { info = `Waktu: ${await zk.getTime()}`; } catch(e) {}
+                } else if (typeof zk.getUsers === 'function') {
+                    try { const u = await zk.getUsers(); info = `${u.length} User Terdeteksi`; } catch(e) {}
+                }
+
+                logs.push({ ip, status: `Online (${info})` });
                 overallSuccess = true;
                 await zk.disconnect();
             } catch (e) {
-                logs.push({ ip, status: `Gagal Protokol: ${e.message.substring(0, 25)}` });
+                logs.push({ ip, status: `Error Protokol: ${e.message.substring(0, 30)}` });
             }
         } catch (err) {
-            logs.push({ ip, status: 'Error Internal' });
+            logs.push({ ip, status: 'Error Internal Server' });
         }
     }
     res.status(200).json({ success: overallSuccess, logs });
@@ -88,13 +99,13 @@ app.post('/api/sync-logs', async (req, res) => {
     const { ips, port } = req.body;
     let totalLogsFormatted = [];
 
-    if (!isZKLibAvailable) return res.status(200).json({ error: 'Library node-zklib tidak terpasang' });
+    if (!isZKLibAvailable) return res.status(500).json({ error: 'Library node-zklib tidak terpasang di server' });
 
     for (const ip of ips) {
-        console.log(`\n[SOLUTION-SCAN] IP: ${ip}`);
+        console.log(`\n[SYNC-START] IP: ${ip}`);
         
         if (!await checkNetworkConnection(ip, port)) {
-            console.log(`[SYNC] ${ip}: Skip, No Network.`);
+            console.log(`[SYNC] ${ip}: Jaringan tidak terjangkau.`);
             continue;
         }
 
@@ -102,29 +113,35 @@ app.post('/api/sync-logs', async (req, res) => {
         try {
             await zk.createSocket();
             
-            // DIAGNOSA 1: Cek Waktu Mesin
-            try {
-                const machineTime = await zk.getTime();
-                console.log(`[DIAG] Waktu Mesin ${ip}: ${machineTime}`);
-            } catch (e) { console.log(`[DIAG] Gagal baca waktu.`); }
+            // Mencoba beberapa metode penarikan log (beberapa versi library berbeda nama)
+            let logsFromMachine = null;
+            if (typeof zk.getAttendances === 'function') {
+                console.log(`[SYNC] Menjalankan getAttendances()...`);
+                logsFromMachine = await zk.getAttendances();
+            } else if (typeof zk.getAttendance === 'function') {
+                console.log(`[SYNC] Menjalankan getAttendance()...`);
+                logsFromMachine = await zk.getAttendance();
+            }
 
-            // DIAGNOSA 2: Ambil Daftar User (Apakah user terdeteksi?)
-            try {
-                const users = await zk.getUsers();
-                console.log(`[DIAG] Total User Terdaftar di Mesin: ${users.length}`);
-            } catch (e) { console.log(`[DIAG] Gagal baca daftar user.`); }
+            console.log(`[DEBUG] Raw Result Tipe:`, typeof logsFromMachine);
+            
+            // Penanganan khusus jika data dibungkus dalam properti 'data'
+            let finalData = [];
+            if (logsFromMachine && Array.isArray(logsFromMachine)) {
+                finalData = logsFromMachine;
+            } else if (logsFromMachine && logsFromMachine.data && Array.isArray(logsFromMachine.data)) {
+                finalData = logsFromMachine.data;
+            }
 
-            // TARIK LOG
-            let logsFromMachine = await zk.getAttendances();
-            console.log(`[DIAG] Hasil Mentah getAttendances():`, JSON.stringify(logsFromMachine ? (Array.isArray(logsFromMachine) ? `Array(${logsFromMachine.length})` : typeof logsFromMachine) : 'null'));
+            console.log(`[SYNC] ${ip}: Menemukan ${finalData.length} entri.`);
 
-            if (!Array.isArray(logsFromMachine) || logsFromMachine.length === 0) {
-                console.log(`[SYNC] ${ip}: TIDAK ADA DATA LOG. (Memori mesin mungkin kosong atau pointer terkunci)`);
+            if (finalData.length === 0) {
+                console.log(`[SYNC] ${ip}: Data log kosong.`);
                 continue;
             }
-            
+
             const groupedLogs = {};
-            logsFromMachine.forEach(log => {
+            finalData.forEach(log => {
                 const recordTime = log.recordTime || log.timestamp;
                 if (!recordTime) return;
 
@@ -158,8 +175,10 @@ app.post('/api/sync-logs', async (req, res) => {
                 }
             });
 
-            const finalLogs = Object.values(groupedLogs);
-            for (const log of finalLogs) {
+            const processed = Object.values(groupedLogs);
+            console.log(`[SYNC] Mengirim ${processed.length} data ke Supabase...`);
+
+            for (const log of processed) {
                 const { data: existing } = await supabase
                     .from('attendance_logs')
                     .select('check_in, check_out')
@@ -188,13 +207,13 @@ app.post('/api/sync-logs', async (req, res) => {
                         fingerprintIn: payload.check_in,
                         shiftOut: '17:00',
                         fingerprintOut: payload.check_out,
-                        remarks: 'Data Mesin Solution',
+                        remarks: 'Data Solution X100',
                         isLate: payload.check_in ? payload.check_in > '08:05' : false
                     });
                 }
             }
         } catch (e) {
-            console.error(`[SYNC] ERROR FATAL IP ${ip}:`, e.message);
+            console.error(`[SYNC] Error IP ${ip}:`, e.message);
         } finally {
             try { await zk.disconnect(); } catch (e) {}
         }
@@ -205,4 +224,5 @@ app.post('/api/sync-logs', async (req, res) => {
 
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`\n[READY] Middleware Solution X100 di Port ${PORT}`);
+    console.log(`-----------------------------------------------`);
 });
