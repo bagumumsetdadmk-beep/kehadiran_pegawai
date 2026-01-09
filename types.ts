@@ -89,5 +89,6 @@ export interface FingerprintMachine {
   commKey: string;
   name: string;
   lastSync: string | null;
-  status: 'Online' | 'Offline';
+  // Fix: Add 'Online (Simulasi)' to the status type to resolve type errors
+  status: 'Online' | 'Offline' | 'Online (Simulasi)';
 }

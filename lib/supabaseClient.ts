@@ -11,7 +11,7 @@ const getEnv = (key: string) => {
       return process.env[key];
     }
   } catch (e) {
-    console.warn('Error reading environment variables:', e);
+    // console.warn('Error reading environment variables:', e);
   }
   return undefined;
 };
@@ -59,13 +59,13 @@ export const checkSupabaseConnection = async (customUrl?: string, customKey?: st
       .select('*', { count: 'exact', head: true });
     
     if (error) {
-      console.error("Connection check failed:", error.message);
+      // Quietly fail for connection checks to avoid console noise
       return false;
     }
     
     return true;
   } catch (err) {
-    console.error("Connection check exception:", err);
+    // Quietly fail for fetch errors (network down, etc)
     return false;
   }
 };

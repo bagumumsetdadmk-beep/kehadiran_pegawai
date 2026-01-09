@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import { 
   Building2, 
@@ -28,7 +29,8 @@ import {
   Link, 
   Unplug, 
   Eye, 
-  EyeOff
+  EyeOff,
+  Network
 } from 'lucide-react';
 import { AttendanceRecord, Employee, Holiday, WorkSchedule, FingerprintMachine, OrganizationProfile } from '../types';
 import { exportAllEmployeesMonthlyAttendanceExcel, exportAttendanceToExcel } from '../utils/exportUtils';
@@ -116,41 +118,19 @@ const SystemConfigView: React.FC<Props> = ({
   );
   const [isTestingConnection, setIsTestingConnection] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
-  const [connectionStatus, setConnectionStatus] = useState<'idle' | 'success' | 'failed' | 'middleware_error'>('idle');
+  const [connectionStatus, setConnectionStatus] = useState<'idle' | 'success' | 'failed' | 'middleware_error' | 'success_simulation'>('idle'); 
+  const [testDetails, setTestDetails] = useState<any[]>([]); // Log dari hasil tes koneksi
 
   // Middleware URL Configuration (Editable by user)
   const [middlewareUrl, setMiddlewareUrl] = useState(() => {
-    // Priority: LocalStorage > Dynamic Hostname > Localhost Fallback
+    // Priority: LocalStorage (user's custom setting) > Dynamic Hostname > Localhost Fallback
     let url = localStorage.getItem('MW_URL');
     
-    // AUTO-CORRECT Logic
-    if (url) {
-        let updated = false;
-        // 1. Fix IPv6 Issue: localhost -> 127.0.0.1
-        if (url.includes('//localhost')) {
-            url = url.replace('//localhost', '//127.0.0.1');
-            updated = true;
-        }
-        // 2. Fix Port Conflict: 3001 or 3005 -> 3006
-        if (url.includes(':3001')) {
-            url = url.replace(':3001', ':3006');
-            updated = true;
-        }
-        if (url.includes(':3005')) {
-            url = url.replace(':3005', ':3006');
-            updated = true;
-        }
-
-        if (updated) {
-            localStorage.setItem('MW_URL', url);
-        }
-    }
-
     if (url) return url;
     
     const hostname = window.location.hostname;
     const effectiveHost = (!hostname || hostname === 'localhost') ? '127.0.0.1' : hostname;
-    // Default Port is now 3006
+    // Default URL for middleware server.
     return `http://${effectiveHost}:3006`;
   });
 
@@ -279,6 +259,7 @@ const SystemConfigView: React.FC<Props> = ({
   const handleTestConnection = async () => {
     setIsTestingConnection(true);
     setConnectionStatus('idle');
+    setTestDetails([]);
 
     const ips = localMachineConfig.ipAddress.split(',').map(i => i.trim()).filter(i => i.length > 0);
     
@@ -289,17 +270,16 @@ const SystemConfigView: React.FC<Props> = ({
     }
 
     try {
-      // Pastikan URL valid dan bersih
+      // Membersihkan URL dari trailing slash
       const baseUrl = middlewareUrl.trim().replace(/\/$/, '');
-      const apiUrl = `${baseUrl}/api/test-connection`;
-      console.log("Connecting to:", apiUrl);
+      const targetUrl = `${baseUrl}/api/test-connection`; // Ganti dengan endpoint Node.js
 
-      // Gunakan AbortController untuk timeout jika server hang/firewalled
-      // UPDATE: Tingkatkan timeout ke 15 detik (15000ms) untuk mengakomodasi scan banyak IP yang offline
+      console.log("Connecting to:", targetUrl);
+
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 15000); 
 
-      const response = await fetch(apiUrl, {
+      const response = await fetch(targetUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -314,12 +294,31 @@ const SystemConfigView: React.FC<Props> = ({
 
       clearTimeout(timeoutId);
 
-      if (response.ok) {
-        setConnectionStatus('success');
-        setLocalMachineConfig(prev => ({...prev, status: 'Online', lastSync: new Date().toLocaleString()}));
+      const contentType = response.headers.get("content-type");
+      if (response.ok && contentType && contentType.indexOf("application/json") !== -1) {
+        const result = await response.json();
+        
+        if (result.status === 'success_simulation') {
+            setConnectionStatus('success_simulation');
+            setLocalMachineConfig(prev => ({...prev, status: 'Online (Simulasi)', lastSync: new Date().toLocaleString()}));
+        } else if (result.success) { // Menggunakan 'success' dari Node.js backend
+            setConnectionStatus('success');
+            setLocalMachineConfig(prev => ({...prev, status: 'Online', lastSync: new Date().toLocaleString()}));
+        } else {
+            setConnectionStatus('failed');
+            setLocalMachineConfig(prev => ({...prev, status: 'Offline'}));
+        }
+
+        if (result.logs) { 
+            setTestDetails(result.logs); // Menggunakan logs dari Node.js
+        }
+        
       } else {
-        setConnectionStatus('failed');
+        const text = await response.text();
+        console.error("Response Error:", text);
+        setConnectionStatus('middleware_error'); 
         setLocalMachineConfig(prev => ({...prev, status: 'Offline'}));
+        alert(`Server middleware merespon dengan status ${response.status}, tapi bukan JSON valid. Pastikan URL Middleware benar dan server backend berjalan dengan benar.`);
       }
     } catch (error) {
       console.error("Middleware error:", error);
@@ -343,10 +342,9 @@ const SystemConfigView: React.FC<Props> = ({
 
     try {
       const baseUrl = middlewareUrl.trim().replace(/\/$/, '');
-      const apiUrl = `${baseUrl}/api/sync-logs`;
+      const apiUrl = `${baseUrl}/api/sync-logs`; // Ganti dengan endpoint Node.js
       console.log("Syncing from:", apiUrl);
 
-      // Sync bisa memakan waktu lama jika banyak data
       const response = await fetch(apiUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -358,20 +356,25 @@ const SystemConfigView: React.FC<Props> = ({
       });
 
       if (response.ok) {
-        const logs = await response.json();
-        const newRecords: AttendanceRecord[] = logs.map((log: any) => {
-            return log as AttendanceRecord; 
-        });
-
-        onSyncAttendance(newRecords); 
-        setLocalMachineConfig(prev => ({...prev, lastSync: new Date().toLocaleString()}));
-        alert(`Berhasil menarik ${logs.length} data log baru dari mesin.`);
+        const logs: AttendanceRecord[] = await response.json(); // Node.js akan langsung mengembalikan AttendanceRecord[]
+        
+        if (Array.isArray(logs)) {
+            // Note: employeeId diisi 'unknown' dari backend. Frontend akan menanganinya saat update state.
+            onSyncAttendance(logs); 
+            setLocalMachineConfig(prev => ({...prev, lastSync: new Date().toLocaleString()}));
+            alert(`Berhasil menarik ${logs.length} data log baru dari mesin.`);
+        } else {
+            console.error("Format data salah:", logs);
+            alert("Format data dari server tidak sesuai array.");
+        }
       } else {
-        alert("Gagal menarik data. Cek koneksi mesin.");
+        const errorText = await response.text();
+        console.error("Gagal menarik data. Server error:", response.status, errorText);
+        alert(`Gagal menarik data. Server error ${response.status}: ${errorText.substring(0, 100)}...`);
       }
     } catch (error) {
       console.error("Sync error:", error);
-      alert(`Gagal menghubungi server middleware di ${middlewareUrl}. Pastikan server berjalan.`);
+      alert(`Gagal menghubungi server middleware di ${middlewareUrl}. Error: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
       setIsSyncing(false);
     }
@@ -448,78 +451,143 @@ const SystemConfigView: React.FC<Props> = ({
   return (
     <div className="space-y-8 animate-in fade-in duration-500 pb-20">
       
-      {/* Export Center */}
-      <div className="bg-gradient-to-r from-slate-800 to-slate-900 rounded-3xl shadow-xl text-white border border-slate-700 overflow-hidden">
-        <div className="p-8 border-b border-white/10 flex items-center gap-4">
-          <div className="p-3 bg-indigo-500/20 rounded-2xl border border-indigo-500/30">
-            <CalendarCheck2 size={28} className="text-indigo-400" />
-          </div>
-          <div>
-            <h3 className="text-xl font-bold">Pusat Laporan & Ekspor</h3>
-            <p className="text-slate-400 text-sm">Unduh data kehadiran dalam format Excel (.xlsx).</p>
-          </div>
-        </div>
-
-        <div className="p-8 grid grid-cols-1 md:grid-cols-2 gap-8">
-          <div className="space-y-4">
-            <h4 className="text-sm font-bold text-slate-300 uppercase tracking-widest flex items-center gap-2">
-              <FileSpreadsheet size={16} /> Rekapitulasi Global
-            </h4>
-            <div className="bg-white/5 p-6 rounded-2xl border border-white/10 space-y-4">
-              <p className="text-xs text-slate-400 leading-relaxed">
-                Ekspor tabel matriks kehadiran. Pilih kategori pegawai yang ingin disertakan.
-              </p>
-              <div className="space-y-2">
-                <label className="text-[10px] font-bold text-slate-500 uppercase">Kategori Data</label>
-                <div className="grid grid-cols-3 gap-2">
-                  <button onClick={() => setExportCategory('staff')} className={`px-2 py-2 rounded-lg text-xs font-bold border transition-all ${exportCategory === 'staff' ? 'bg-indigo-600 text-white border-indigo-500' : 'bg-slate-800 text-slate-400 border-slate-600 hover:bg-slate-700'}`}>Hanya Staf</button>
-                  <button onClick={() => setExportCategory('manager')} className={`px-2 py-2 rounded-lg text-xs font-bold border transition-all ${exportCategory === 'manager' ? 'bg-indigo-600 text-white border-indigo-500' : 'bg-slate-800 text-slate-400 border-slate-600 hover:bg-slate-700'}`}>Pimpinan</button>
-                  <button onClick={() => setExportCategory('all')} className={`px-2 py-2 rounded-lg text-xs font-bold border transition-all ${exportCategory === 'all' ? 'bg-indigo-600 text-white border-indigo-500' : 'bg-slate-800 text-slate-400 border-slate-600 hover:bg-slate-700'}`}>Semua</button>
-                </div>
-              </div>
-              <div className="space-y-2">
-                <label className="text-[10px] font-bold text-slate-500 uppercase">Pilih Periode</label>
-                <input type="month" className="w-full bg-slate-800 border border-slate-600 rounded-xl px-4 py-2.5 text-sm font-bold text-white focus:ring-2 focus:ring-indigo-500 outline-none" value={exportMonth} onChange={(e) => setExportMonth(e.target.value)}/>
-              </div>
-              <button onClick={handleExportMonthlyAll} className="w-full bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-3 rounded-xl text-sm font-bold flex items-center justify-center gap-2 transition-all shadow-lg active:scale-95">
-                <Download size={18} /> Unduh Rekap {exportCategory === 'staff' ? 'Staf' : exportCategory === 'manager' ? 'Pimpinan' : 'Global'}
-              </button>
-            </div>
-          </div>
-          <div className="space-y-4">
-             <h4 className="text-sm font-bold text-slate-300 uppercase tracking-widest flex items-center gap-2">
-              <User size={16} /> Laporan Individual
-            </h4>
-            <div className="bg-white/5 p-6 rounded-2xl border border-white/10 space-y-4">
-              <p className="text-xs text-slate-400 leading-relaxed">
-                Ekspor detail kehadiran lengkap satu pegawai termasuk status izin dan hari libur.
-              </p>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                 <div className="space-y-2">
-                  <label className="text-[10px] font-bold text-slate-500 uppercase">Pilih Pegawai</label>
-                  <select className="w-full bg-slate-800 border border-slate-600 rounded-xl px-4 py-2.5 text-sm font-medium text-white focus:ring-2 focus:ring-indigo-500 outline-none" value={selectedEmployeeForExport} onChange={(e) => setSelectedEmployeeForExport(e.target.value)}>
-                    <option value="">-- Pilih Nama --</option>
-                    {employees.map(emp => (
-                      <option key={emp.id} value={emp.id}>{emp.name}</option>
-                    ))}
-                  </select>
-                </div>
-                <div className="space-y-2">
-                  <label className="text-[10px] font-bold text-slate-500 uppercase">Pilih Periode</label>
-                   <input type="month" className="w-full bg-slate-800 border border-slate-600 rounded-xl px-4 py-2.5 text-sm font-bold text-white focus:ring-2 focus:ring-indigo-500 outline-none" value={exportMonth} onChange={(e) => setExportMonth(e.target.value)}/>
-                </div>
-              </div>
-              <button onClick={handleExportIndividual} disabled={!selectedEmployeeForExport} className={`w-full px-4 py-3 rounded-xl text-sm font-bold flex items-center justify-center gap-2 transition-all shadow-lg active:scale-95 ${!selectedEmployeeForExport ? 'bg-slate-700 text-slate-500 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-700 text-white'}`}>
-                <Download size={18} /> Unduh Laporan Pegawai
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-
+      {/* Configuration Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+        
+        {/* Machine Configuration */}
+        <div className="bg-white rounded-3xl shadow-sm border border-slate-200 overflow-hidden lg:col-span-1">
+          <div className="p-8 border-b border-slate-100 bg-slate-50/50 flex items-center gap-3">
+             <div className="p-2 bg-emerald-100 text-emerald-600 rounded-lg">
+                <Server size={20} />
+             </div>
+             <div>
+               <h3 className="text-lg font-bold text-slate-800">Koneksi Mesin Fingerprint</h3>
+               <p className="text-xs text-slate-500">Hubungkan aplikasi dengan IP mesin ZKTeco.</p>
+             </div>
+          </div>
+          <div className="p-8 space-y-6">
+             <div className="flex items-center gap-4 p-4 bg-slate-50 border border-slate-200 rounded-xl">
+               <div className={`w-10 h-10 rounded-full flex items-center justify-center ${localMachineConfig.status === 'Online' || localMachineConfig.status === 'Online (Simulasi)' ? 'bg-emerald-100 text-emerald-600' : 'bg-rose-100 text-rose-600'}`}>
+                 <Wifi size={20} />
+               </div>
+               <div className="flex-1">
+                 <p className="text-xs font-bold text-slate-400 uppercase">Status Koneksi</p>
+                 <p className={`text-sm font-bold ${localMachineConfig.status === 'Online' || localMachineConfig.status === 'Online (Simulasi)' ? 'text-emerald-600' : 'text-rose-600'}`}>
+                   {localMachineConfig.status}
+                 </p>
+               </div>
+               {localMachineConfig.lastSync && (
+                 <div className="text-right">
+                    <p className="text-[10px] text-slate-400">Terakhir Sync</p>
+                    <p className="text-xs font-mono text-slate-600">{localMachineConfig.lastSync}</p>
+                 </div>
+               )}
+             </div>
 
-        {/* Database Configuration (NEW) */}
+             <div className="space-y-4">
+                <div className="space-y-1.5">
+                     <label className="text-[10px] font-bold text-slate-500 uppercase flex items-center gap-1">
+                        <Network size={12} /> IP Address Mesin
+                     </label>
+                     <input type="text" placeholder="Contoh: 192.168.1.201" className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-emerald-500 font-mono font-bold text-slate-700" value={localMachineConfig.ipAddress} onChange={(e) => setLocalMachineConfig({...localMachineConfig, ipAddress: e.target.value})} />
+                     <p className="text-[9px] text-slate-400">Pastikan IP ini satu jaringan dengan komputer ini.</p>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                   <div className="space-y-1.5">
+                     <div className="flex justify-between items-center">
+                        <label className="text-[10px] font-bold text-slate-500 uppercase">Port</label>
+                        <span className="text-[9px] text-slate-400 bg-slate-100 px-1 rounded">Default: 4370</span>
+                     </div>
+                     <input type="text" className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-emerald-500 font-mono" value={localMachineConfig.port} onChange={(e) => setLocalMachineConfig({...localMachineConfig, port: e.target.value})} />
+                   </div>
+                   <div className="space-y-1.5">
+                      <div className="flex justify-between items-center">
+                          <label className="text-[10px] font-bold text-slate-500 uppercase">Comm Key</label>
+                          <span className="text-[9px] text-slate-400 bg-slate-100 px-1 rounded">Default: 0</span>
+                      </div>
+                      <input type="password" className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-emerald-500 font-mono" value={localMachineConfig.commKey} onChange={(e) => setLocalMachineConfig({...localMachineConfig, commKey: e.target.value})} />
+                   </div>
+                </div>
+                
+                {/* Middleware URL Configuration */}
+                <div className="space-y-1.5 pt-4 border-t border-slate-100">
+                   <div className="flex justify-between items-center">
+                      <label className="text-[10px] font-bold text-slate-500 uppercase">URL Server Backend (Node.js)</label>
+                      <button onClick={handleResetMiddlewareUrl} className="text-[9px] font-bold text-indigo-600 hover:text-indigo-800 flex items-center gap-1">
+                         <RotateCcw size={10} /> Reset Default
+                      </button>
+                   </div>
+                   <input 
+                     type="text" 
+                     className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2 text-xs font-mono text-slate-600 focus:ring-2 focus:ring-slate-400 outline-none" 
+                     value={middlewareUrl} 
+                     onChange={(e) => {
+                       setMiddlewareUrl(e.target.value);
+                       localStorage.setItem('MW_URL', e.target.value);
+                     }} 
+                   />
+                   <p className="text-[9px] text-slate-400 leading-tight">
+                     Alamat server Node.js yang menjalankan middleware (file <code>server.js</code>).
+                   </p>
+                </div>
+             </div>
+             
+             <div className="grid grid-cols-2 gap-3 pt-2">
+               <button 
+                  onClick={handleTestConnection}
+                  disabled={isTestingConnection}
+                  className={`py-3 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-all ${isTestingConnection ? 'bg-slate-100 text-slate-400' : 'bg-white border border-slate-300 text-slate-600 hover:bg-slate-50'}`}
+               >
+                 {isTestingConnection ? <RefreshCw size={16} className="animate-spin" /> : <Power size={16} />} 
+                 {isTestingConnection ? 'Menghubungkan...' : 'Tes Koneksi'}
+               </button>
+               <button onClick={handleSaveMachine} className="py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2 shadow-lg shadow-emerald-100 transition-all">
+                 <Save size={16} /> Simpan Config
+               </button>
+             </div>
+
+             {/* Test Details Log */}
+             {testDetails.length > 0 && (
+                <div className="mt-4 p-3 bg-slate-50 rounded-xl border border-slate-200 max-h-32 overflow-y-auto">
+                    <p className="text-[10px] font-bold text-slate-400 uppercase mb-2">Log Koneksi:</p>
+                    {testDetails.map((log, idx) => (
+                        <div key={idx} className="flex justify-between items-center text-xs mb-1">
+                            <span className="font-mono text-slate-600">{log.ip}</span>
+                            <span className={`font-bold ${log.status.includes('OK') ? 'text-emerald-600' : (log.status.includes('Simulasi') ? 'text-amber-600' : 'text-rose-600')}`}>{log.status}</span>
+                        </div>
+                    ))}
+                </div>
+             )}
+
+             {/* Action Button: Sync Logs */}
+             <div className="pt-2 border-t border-slate-100">
+                <button 
+                  onClick={handleSyncLogs}
+                  disabled={isSyncing || (localMachineConfig.status !== 'Online' && localMachineConfig.status !== 'Online (Simulasi)')}
+                  className={`w-full py-3 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-all ${localMachineConfig.status === 'Online' || localMachineConfig.status === 'Online (Simulasi)' ? 'bg-blue-600 hover:bg-blue-700 text-white shadow-lg' : 'bg-slate-100 text-slate-400 cursor-not-allowed'}`}
+                >
+                  {isSyncing ? <RefreshCw size={16} className="animate-spin" /> : <ArrowDownToLine size={16} />}
+                  {isSyncing ? 'Sedang Menarik Data...' : 'Tarik Data Log Sekarang'}
+                </button>
+             </div>
+
+             {(connectionStatus === 'middleware_error' || connectionStatus === 'failed') && (
+                <div className="p-3 bg-rose-50 text-rose-700 rounded-xl text-xs font-medium border border-rose-100">
+                   <strong>Error:</strong> Tidak bisa menghubungi server middleware di <code>{middlewareUrl}</code>. 
+                   <br/>Pastikan server Node.js (file <code>server.js</code>) sudah berjalan dan konfigurasi IP mesin benar.
+                </div>
+             )}
+             {connectionStatus === 'success_simulation' && (
+                <div className="p-3 bg-amber-50 text-amber-700 rounded-xl text-xs font-medium border border-amber-100">
+                    <strong>Peringatan:</strong> Koneksi menggunakan mode simulasi. Library <code>node-zklib</code> tidak ditemukan di server backend.
+                    <br/>Jalankan <code>npm install node-zklib</code> di folder <code>server.js</code> untuk fungsionalitas penuh.
+                </div>
+             )}
+          </div>
+        </div>
+
+        {/* Database Configuration */}
         <div className="bg-white rounded-3xl shadow-sm border border-slate-200 overflow-hidden lg:col-span-1">
           <div className="p-8 border-b border-slate-100 bg-slate-50/50 flex items-center gap-3">
              <div className="p-2 bg-blue-100 text-blue-600 rounded-lg">
@@ -587,299 +655,11 @@ const SystemConfigView: React.FC<Props> = ({
              </form>
           </div>
         </div>
-        
-        {/* Machine Configuration */}
-        <div className="bg-white rounded-3xl shadow-sm border border-slate-200 overflow-hidden lg:col-span-1">
-          <div className="p-8 border-b border-slate-100 bg-slate-50/50 flex items-center gap-3">
-             <div className="p-2 bg-emerald-100 text-emerald-600 rounded-lg">
-                <Server size={20} />
-             </div>
-             <div>
-               <h3 className="text-lg font-bold text-slate-800">Koneksi Mesin Fingerprint</h3>
-               <p className="text-xs text-slate-500">Konfigurasi alamat IP mesin untuk sinkronisasi (Membutuhkan Middleware).</p>
-             </div>
-          </div>
-          <div className="p-8 space-y-6">
-             <div className="flex items-center gap-4 p-4 bg-slate-50 border border-slate-200 rounded-xl">
-               <div className={`w-10 h-10 rounded-full flex items-center justify-center ${localMachineConfig.status === 'Online' ? 'bg-emerald-100 text-emerald-600' : 'bg-rose-100 text-rose-600'}`}>
-                 <Wifi size={20} />
-               </div>
-               <div className="flex-1">
-                 <p className="text-xs font-bold text-slate-400 uppercase">Status Koneksi</p>
-                 <p className={`text-sm font-bold ${localMachineConfig.status === 'Online' ? 'text-emerald-600' : 'text-rose-600'}`}>
-                   {localMachineConfig.status}
-                 </p>
-               </div>
-               {localMachineConfig.lastSync && (
-                 <div className="text-right">
-                    <p className="text-[10px] text-slate-400">Terakhir Sync</p>
-                    <p className="text-xs font-mono text-slate-600">{localMachineConfig.lastSync}</p>
-                 </div>
-               )}
-             </div>
 
-             <div className="space-y-4">
-                <div className="space-y-1.5">
-                   <label className="text-[10px] font-bold text-slate-500 uppercase">Nama Grup Mesin</label>
-                   <input type="text" className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-emerald-500" value={localMachineConfig.name} onChange={(e) => setLocalMachineConfig({...localMachineConfig, name: e.target.value})} />
-                </div>
-                <div className="grid grid-cols-1 gap-4">
-                   <div className="space-y-1.5">
-                     <label className="text-[10px] font-bold text-slate-500 uppercase">IP Address (Pisahkan koma jika banyak)</label>
-                     <input type="text" placeholder="192.168.1.201, 192.168.1.202" className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-emerald-500 font-mono" value={localMachineConfig.ipAddress} onChange={(e) => setLocalMachineConfig({...localMachineConfig, ipAddress: e.target.value})} />
-                   </div>
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                   <div className="space-y-1.5">
-                     <div className="flex justify-between items-center">
-                        <label className="text-[10px] font-bold text-slate-500 uppercase">Port</label>
-                        <span className="text-[9px] text-slate-400 bg-slate-100 px-1 rounded">Default: 4370</span>
-                     </div>
-                     <input type="text" className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-emerald-500 font-mono" value={localMachineConfig.port} onChange={(e) => setLocalMachineConfig({...localMachineConfig, port: e.target.value})} />
-                   </div>
-                   <div className="space-y-1.5">
-                      <div className="flex justify-between items-center">
-                          <label className="text-[10px] font-bold text-slate-500 uppercase">Comm Key</label>
-                          <span className="text-[9px] text-slate-400 bg-slate-100 px-1 rounded">Default: 0</span>
-                      </div>
-                      <input type="password" className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-emerald-500 font-mono" value={localMachineConfig.commKey} onChange={(e) => setLocalMachineConfig({...localMachineConfig, commKey: e.target.value})} />
-                   </div>
-                </div>
-                
-                {/* Middleware URL Configuration */}
-                <div className="space-y-1.5 pt-2 border-t border-slate-100">
-                   <div className="flex justify-between items-center">
-                      <label className="text-[10px] font-bold text-slate-500 uppercase">URL Server Middleware (Backend)</label>
-                      <button onClick={handleResetMiddlewareUrl} className="text-[9px] font-bold text-indigo-600 hover:text-indigo-800 flex items-center gap-1">
-                         <RotateCcw size={10} /> Reset Default
-                      </button>
-                   </div>
-                   <input 
-                     type="text" 
-                     className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2 text-xs font-mono text-slate-600 focus:ring-2 focus:ring-slate-400 outline-none" 
-                     value={middlewareUrl} 
-                     onChange={(e) => {
-                       setMiddlewareUrl(e.target.value);
-                       localStorage.setItem('MW_URL', e.target.value);
-                     }} 
-                   />
-                   <p className="text-[9px] text-slate-400">Pastikan <code>node server.js</code> berjalan. Gunakan 127.0.0.1 jika localhost bermasalah.</p>
-                </div>
-             </div>
-             
-             <div className="grid grid-cols-2 gap-3 pt-2">
-               <button 
-                  onClick={handleTestConnection}
-                  disabled={isTestingConnection}
-                  className={`py-3 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-all ${isTestingConnection ? 'bg-slate-100 text-slate-400' : 'bg-white border border-slate-300 text-slate-600 hover:bg-slate-50'}`}
-               >
-                 {isTestingConnection ? <RefreshCw size={16} className="animate-spin" /> : <Power size={16} />} 
-                 {isTestingConnection ? 'Menghubungkan...' : 'Tes Koneksi'}
-               </button>
-               <button onClick={handleSaveMachine} className="py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2 shadow-lg shadow-emerald-100 transition-all">
-                 <Save size={16} /> Simpan Config
-               </button>
-             </div>
+      </div>
 
-             {/* Action Button: Sync Logs */}
-             <div className="pt-2 border-t border-slate-100">
-                <button 
-                  onClick={handleSyncLogs}
-                  disabled={isSyncing || localMachineConfig.status !== 'Online'}
-                  className={`w-full py-3 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-all ${localMachineConfig.status === 'Online' ? 'bg-blue-600 hover:bg-blue-700 text-white shadow-lg' : 'bg-slate-100 text-slate-400 cursor-not-allowed'}`}
-                >
-                  {isSyncing ? <RefreshCw size={16} className="animate-spin" /> : <ArrowDownToLine size={16} />}
-                  {isSyncing ? 'Sedang Menarik Data...' : 'Tarik Data Log Sekarang'}
-                </button>
-             </div>
-
-             {connectionStatus === 'middleware_error' && (
-                <div className="p-3 bg-rose-50 text-rose-700 rounded-xl text-xs font-medium border border-rose-100">
-                   <strong>Error:</strong> Tidak bisa menghubungi server middleware di <code>{middlewareUrl}</code>. 
-                   <br/>1. Pastikan Anda telah menjalankan <code>node server.js</code> di terminal terpisah.
-                   <br/>2. Pastikan port 3006 (default) tidak digunakan aplikasi lain.
-                   <br/>3. Jika menggunakan 'localhost', coba ganti URL diatas menjadi 'http://127.0.0.1:3006'.
-                   
-                   {isHttps && (
-                     <div className="mt-2 text-rose-800 border-t border-rose-200 pt-1">
-                        <strong>Perhatian HTTPS:</strong> Anda mengakses web ini via HTTPS. Koneksi ke server lokal (HTTP) mungkin diblokir browser (Mixed Content).
-                        <br/>Solusi: Akses web ini via <code>http://localhost...</code> atau izinkan "Insecure Content" di pengaturan browser.
-                     </div>
-                   )}
-                </div>
-             )}
-          </div>
-        </div>
-
-        {/* Structure & Fingerprint Import (Moved to grid) */}
-        <div className="space-y-8 lg:col-span-1">
-          <div className="bg-white rounded-3xl shadow-sm border border-slate-200 overflow-hidden">
-            <div className="p-8 border-b border-slate-100 bg-slate-50/50 flex items-center gap-3">
-              <div className="p-2 bg-indigo-100 text-indigo-600 rounded-lg"><LayoutGrid size={20} /></div>
-              <div><h3 className="text-lg font-bold text-slate-800">Manajemen Subbagian</h3><p className="text-xs text-slate-500">Kelola struktur organisasi instansi.</p></div>
-            </div>
-            <div className="p-8 space-y-6">
-               <div className="flex gap-2">
-                 <input type="text" className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-indigo-500" placeholder="Nama subbagian baru..." value={newSubBagian} onChange={(e) => setNewSubBagian(e.target.value)} onKeyPress={(e) => e.key === 'Enter' && handleAddSub()} />
-                 <button onClick={handleAddSub} className="bg-indigo-600 hover:bg-indigo-700 text-white p-2.5 rounded-xl shadow-md transition-all active:scale-95"><Plus size={20} /></button>
-               </div>
-               <div className="space-y-2">
-                 {subBagianList.map(sub => (
-                   <div key={sub} className="flex items-center justify-between p-3 bg-slate-50 border border-slate-100 rounded-xl group hover:border-indigo-100 transition-all">
-                     <span className="text-sm font-semibold text-slate-700">{sub}</span>
-                     <button onClick={() => onDeleteSubBagian(sub)} className="p-1.5 text-slate-300 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all opacity-0 group-hover:opacity-100"><Trash2 size={16} /></button>
-                   </div>
-                 ))}
-               </div>
-            </div>
-          </div>
-
-          <div className="bg-white rounded-3xl shadow-sm border border-slate-200 overflow-hidden">
-            <div className="p-8 border-b border-slate-100 bg-slate-50/50 flex items-center gap-3">
-              <div className="p-2 bg-indigo-100 text-indigo-600 rounded-lg"><Upload size={20} /></div>
-              <div><h3 className="text-lg font-bold text-slate-800">Import Log Manual</h3><p className="text-xs text-slate-500">Alternatif jika koneksi mesin offline.</p></div>
-            </div>
-            <div className="p-8">
-              <div className="border-2 border-dashed border-slate-200 rounded-2xl p-8 flex flex-col items-center justify-center gap-4 text-center hover:border-indigo-300 transition-colors group">
-                <div className="w-12 h-12 bg-slate-50 rounded-full flex items-center justify-center text-slate-400 group-hover:bg-indigo-50 group-hover:text-indigo-600 transition-all"><FileJson size={24} /></div>
-                <div><p className="text-sm font-bold text-slate-700">Pilih File Log (.csv)</p><p className="text-[10px] text-slate-400 mt-1">Download dari mesin via USB</p></div>
-                <label className="cursor-pointer bg-white border border-slate-200 hover:border-slate-300 text-slate-700 px-5 py-2 rounded-lg text-xs font-bold transition-all shadow-sm active:scale-95">Browse File<input type="file" className="hidden" onChange={onImportFingerprint} accept=".csv" /></label>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Work Schedule Configuration (Full Width or Grid) */}
-        <div className="bg-white rounded-3xl shadow-sm border border-slate-200 overflow-hidden lg:col-span-2">
-          <div className="p-8 border-b border-slate-100 bg-slate-50/50 flex items-center gap-3">
-            <div className="p-2 bg-amber-100 text-amber-600 rounded-lg">
-              <Clock size={20} />
-            </div>
-            <div>
-              <h3 className="text-lg font-bold text-slate-800">Konfigurasi Jam Kerja</h3>
-              <p className="text-xs text-slate-500">Atur jam masuk dan pulang untuk hari tertentu atau periode khusus (misal: Puasa).</p>
-            </div>
-          </div>
-          
-          <div className="p-8 grid grid-cols-1 lg:grid-cols-3 gap-8">
-            <div className="lg:col-span-1 space-y-6">
-              <div className="flex items-center justify-between border-b border-slate-100 pb-2">
-                 <h4 className="text-sm font-bold text-slate-700">{editingScheduleId ? 'Edit Aturan' : 'Buat Aturan Baru'}</h4>
-                 {editingScheduleId && (
-                   <button onClick={handleCancelEdit} className="text-[10px] font-bold text-rose-500 flex items-center gap-1 hover:bg-rose-50 px-2 py-1 rounded transition-colors">
-                     <RotateCcw size={10} /> Batal Edit
-                   </button>
-                 )}
-              </div>
-              
-              <form onSubmit={handleSaveSchedule} className="space-y-4">
-                <div className="space-y-1.5">
-                  <label className="text-[10px] font-bold text-slate-500 uppercase">Nama Aturan</label>
-                  <input type="text" placeholder="Contoh: Jam Kerja Puasa" className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2 text-sm focus:ring-2 focus:ring-amber-500 outline-none" value={newSchedule.name} onChange={(e) => setNewSchedule({...newSchedule, name: e.target.value})} required />
-                </div>
-                
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-bold text-slate-500 uppercase">Jam Masuk</label>
-                    <input type="time" className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2 text-sm focus:ring-2 focus:ring-amber-500 outline-none" value={newSchedule.startTime} onChange={(e) => setNewSchedule({...newSchedule, startTime: e.target.value})} required />
-                  </div>
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-bold text-slate-500 uppercase">Jam Pulang</label>
-                    <input type="time" className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2 text-sm focus:ring-2 focus:ring-amber-500 outline-none" value={newSchedule.endTime} onChange={(e) => setNewSchedule({...newSchedule, endTime: e.target.value})} required />
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-[10px] font-bold text-slate-500 uppercase">Hari Berlaku</label>
-                  <div className="flex flex-wrap gap-2">
-                    {weekDays.map(day => (
-                      <button key={day} type="button" onClick={() => toggleDay(day)} className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-all ${newSchedule.days?.includes(day) ? 'bg-amber-100 text-amber-700 border-amber-200' : 'bg-white text-slate-400 border-slate-200 hover:border-amber-200'}`}>
-                        {day.substring(0, 3)}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-3">
-                   <div className="flex items-center gap-2 text-slate-600 mb-2">
-                      <CalendarRange size={14} />
-                      <span className="text-xs font-bold">Periode Khusus (Opsional)</span>
-                   </div>
-                   <div className="grid grid-cols-2 gap-3">
-                    <div className="space-y-1">
-                      <label className="text-[9px] font-bold text-slate-400 uppercase">Mulai</label>
-                      <input type="date" className="w-full bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-xs outline-none" value={newSchedule.startDate || ''} onChange={(e) => setNewSchedule({...newSchedule, startDate: e.target.value})} />
-                    </div>
-                    <div className="space-y-1">
-                      <label className="text-[9px] font-bold text-slate-400 uppercase">Selesai</label>
-                      <input type="date" className="w-full bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-xs outline-none" value={newSchedule.endDate || ''} onChange={(e) => setNewSchedule({...newSchedule, endDate: e.target.value})} />
-                    </div>
-                   </div>
-                   <p className="text-[10px] text-slate-400 leading-tight">Biarkan kosong jika aturan berlaku permanen.</p>
-                </div>
-
-                <button type="submit" className={`w-full font-bold py-3 rounded-xl flex items-center justify-center gap-2 text-sm transition-all ${editingScheduleId ? 'bg-amber-600 hover:bg-amber-700 text-white' : 'bg-slate-800 hover:bg-slate-700 text-white'}`}>
-                  {editingScheduleId ? <><Save size={16} /> Perbarui Aturan</> : <><Plus size={16} /> Simpan Aturan</>}
-                </button>
-              </form>
-            </div>
-
-            <div className="lg:col-span-2 space-y-4">
-               <h4 className="text-sm font-bold text-slate-700 border-b border-slate-100 pb-2">Daftar Jam Kerja Aktif</h4>
-               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {schedules.map(sch => (
-                    <div key={sch.id} className={`border p-4 rounded-xl flex flex-col justify-between transition-all shadow-sm ${editingScheduleId === sch.id ? 'bg-amber-50 border-amber-300 ring-2 ring-amber-100' : 'bg-white border-slate-200 hover:border-amber-200'}`}>
-                      <div>
-                        <div className="flex justify-between items-start mb-2">
-                           <div>
-                             <h5 className="font-bold text-slate-800 text-sm">{sch.name}</h5>
-                             <div className="flex items-center gap-2 mt-1">
-                                <span className="text-xs font-mono bg-amber-50 text-amber-700 px-2 py-0.5 rounded border border-amber-100">{sch.startTime} - {sch.endTime}</span>
-                             </div>
-                           </div>
-                           <div className="flex items-center gap-1">
-                              <button onClick={() => handleEditSchedule(sch)} className="p-1.5 text-slate-400 hover:text-amber-600 hover:bg-amber-50 rounded-lg transition-colors" title="Edit Aturan">
-                                <Edit size={16} />
-                              </button>
-                              {onDeleteSchedule && (
-                                <button onClick={() => onDeleteSchedule(sch.id)} className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors" title="Hapus Aturan">
-                                  <Trash2 size={16} />
-                                </button>
-                              )}
-                           </div>
-                        </div>
-                        <div className="flex flex-wrap gap-1 mb-3">
-                          {sch.days.map(d => (
-                            <span key={d} className="text-[10px] font-bold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">{d.substring(0,3)}</span>
-                          ))}
-                        </div>
-                      </div>
-                      
-                      {sch.startDate && sch.endDate ? (
-                        <div className="flex items-center gap-2 text-[10px] font-bold text-white bg-indigo-500 px-3 py-1.5 rounded-lg self-start">
-                           <CalendarRange size={12} />
-                           {sch.startDate} s/d {sch.endDate}
-                        </div>
-                      ) : (
-                        <div className="flex items-center gap-2 text-[10px] font-bold text-slate-500 bg-slate-100 px-3 py-1.5 rounded-lg self-start">
-                           <CheckCircle2 size={12} />
-                           Permanen
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                  {schedules.length === 0 && (
-                     <div className="col-span-full py-10 text-center text-slate-400 text-sm italic bg-slate-50 rounded-xl border border-dashed border-slate-200">
-                       Belum ada aturan jam kerja. Sistem akan menggunakan default (08:00 - 17:00).
-                     </div>
-                  )}
-               </div>
-            </div>
-          </div>
-        </div>
-
-        {/* OPD Configuration */}
-        <div className="bg-white rounded-3xl shadow-sm border border-slate-200 overflow-hidden lg:col-span-2">
+      {/* OPD Profile Section */}
+      <div className="mt-8 bg-white rounded-3xl shadow-sm border border-slate-200 overflow-hidden">
           <div className="p-8 border-b border-slate-100 bg-slate-50/50 flex items-center gap-3">
             <div className="p-2 bg-indigo-100 text-indigo-600 rounded-lg">
               <Building2 size={20} />
@@ -936,7 +716,6 @@ const SystemConfigView: React.FC<Props> = ({
             </button>
           </form>
         </div>
-      </div>
     </div>
   );
 };
