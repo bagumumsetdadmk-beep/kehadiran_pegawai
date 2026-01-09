@@ -6,7 +6,7 @@ import {
   Save, 
   CheckCircle2, 
   FileJson, 
-  Image as ImageIcon, 
+  ImageIcon, 
   X, 
   LayoutGrid, 
   Plus, 
@@ -32,10 +32,10 @@ import {
   EyeOff,
   Network,
   AlertCircle,
-  Skull
+  Skull,
+  CalendarDays
 } from 'lucide-react';
 import { AttendanceRecord, Employee, Holiday, WorkSchedule, FingerprintMachine, OrganizationProfile } from '../types';
-import { exportAllEmployeesMonthlyAttendanceExcel, exportAttendanceToExcel } from '../utils/exportUtils';
 import { checkSupabaseConnection } from '../lib/supabaseClient';
 
 interface Props {
@@ -58,35 +58,15 @@ interface Props {
 }
 
 const SystemConfigView: React.FC<Props> = ({ 
-  onImportFingerprint, 
   opdProfile, 
   onUpdateOpdProfile, 
-  subBagianList, 
   employees, 
   attendance, 
-  holidays, 
-  schedules = [], 
   machineConfig, 
-  onAddSubBagian, 
-  onDeleteSubBagian, 
-  onAddSchedule, 
-  onUpdateSchedule, 
-  onDeleteSchedule, 
   onUpdateMachine, 
   onSyncAttendance 
 }) => {
   const [localOpdInfo, setLocalOpdInfo] = useState<OrganizationProfile>(opdProfile);
-  const [newSubBagian, setNewSubBagian] = useState('');
-  const [isSaved, setIsSaved] = useState(false);
-  
-  useEffect(() => {
-    setLocalOpdInfo(opdProfile);
-  }, [opdProfile]);
-
-  const [exportMonth, setExportMonth] = useState(new Date().toISOString().substring(0, 7));
-  const [exportCategory, setExportCategory] = useState<'all' | 'staff' | 'manager'>('staff'); 
-  const [selectedEmployeeForExport, setSelectedEmployeeForExport] = useState<string>('');
-
   const [dbConfig, setDbConfig] = useState({
     url: localStorage.getItem('SB_URL') || '',
     key: localStorage.getItem('SB_KEY') || ''
@@ -109,7 +89,7 @@ const SystemConfigView: React.FC<Props> = ({
   const [isSyncing, setIsSyncing] = useState(false);
   const [isClearing, setIsClearing] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState<'idle' | 'success' | 'failed' | 'middleware_error' | 'success_simulation'>('idle'); 
-  const [testDetails, setTestDetails] = useState<any[]>([]);
+  const [syncYear, setSyncYear] = useState('2026');
 
   const [middlewareUrl, setMiddlewareUrl] = useState(() => {
     return localStorage.getItem('MW_URL') || `http://127.0.0.1:3006`;
@@ -131,49 +111,34 @@ const SystemConfigView: React.FC<Props> = ({
       localStorage.setItem('SB_URL', dbConfig.url);
       localStorage.setItem('SB_KEY', dbConfig.key);
       setDbStatus('connected');
-      alert("Koneksi Database Berhasil Tersimpan!");
+      alert("Koneksi Database Berhasil!");
       window.location.reload();
     } else {
       setDbStatus('disconnected');
-      alert("Gagal terhubung ke Database. Periksa URL dan Anon Key Anda.");
+      alert("Gagal terhubung ke Database.");
     }
-  };
-
-  const handleSaveOPD = (e: React.FormEvent) => {
-    e.preventDefault();
-    onUpdateOpdProfile(localOpdInfo);
-    setIsSaved(true);
-    setTimeout(() => setIsSaved(false), 3000);
   };
 
   const handleSaveMachine = () => {
     if(onUpdateMachine) {
         onUpdateMachine(localMachineConfig);
     }
+    alert("Konfigurasi Mesin disimpan.");
   };
 
   const handleTestConnection = async () => {
     setIsTestingConnection(true);
     setConnectionStatus('idle');
-    setTestDetails([]);
 
     const ips = localMachineConfig.ipAddress.split(',').map(i => i.trim()).filter(i => i.length > 0);
     
-    if (ips.length === 0) {
-        alert("Mohon isi IP Address mesin.");
-        setIsTestingConnection(false);
-        return;
-    }
-
     try {
       const baseUrl = middlewareUrl.trim().replace(/\/$/, '');
-      const targetUrl = `${baseUrl}/api/test-connection`;
-
-      const response = await fetch(targetUrl, {
+      const response = await fetch(`${baseUrl}/api/test-connection`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          ips: ips, 
+          ips, 
           port: parseInt(localMachineConfig.port),
           commKey: parseInt(localMachineConfig.commKey)
         })
@@ -181,17 +146,8 @@ const SystemConfigView: React.FC<Props> = ({
 
       if (response.ok) {
         const result = await response.json();
-        if (result.status === 'success_simulation') {
-            setConnectionStatus('success_simulation');
-            setLocalMachineConfig(prev => ({...prev, status: 'Online (Simulasi)'}));
-        } else if (result.success) {
-            setConnectionStatus('success');
-            setLocalMachineConfig(prev => ({...prev, status: 'Online', lastSync: new Date().toLocaleString()}));
-        } else {
-            setConnectionStatus('failed');
-            setLocalMachineConfig(prev => ({...prev, status: 'Offline'}));
-        }
-        if (result.logs) setTestDetails(result.logs);
+        setConnectionStatus(result.status === 'success_simulation' ? 'success_simulation' : (result.success ? 'success' : 'failed'));
+        setLocalMachineConfig(prev => ({...prev, status: result.success ? 'Online' : 'Offline'}));
       } else {
         setConnectionStatus('middleware_error');
       }
@@ -215,6 +171,7 @@ const SystemConfigView: React.FC<Props> = ({
           ips: localMachineConfig.ipAddress.split(',').map(i => i.trim()),
           port: parseInt(localMachineConfig.port),
           commKey: parseInt(localMachineConfig.commKey),
+          targetYear: parseInt(syncYear)
         }),
       });
 
@@ -223,22 +180,20 @@ const SystemConfigView: React.FC<Props> = ({
         if (Array.isArray(logs)) {
             onSyncAttendance(logs); 
             setLocalMachineConfig(prev => ({...prev, lastSync: new Date().toLocaleString()}));
-            alert(`Selesai! Berhasil menarik ${logs.length} data.`);
+            alert(`Selesai! Berhasil memproses ${logs.length} data untuk tahun ${syncYear}.`);
         }
       } else {
-        alert("Gagal menarik data dari server middleware.");
+        alert("Gagal menarik data.");
       }
     } catch (error) {
-      alert("Error: Gagal menghubungi server backend.");
+      alert("Error: Gagal menghubungi middleware.");
     } finally {
       setIsSyncing(false);
     }
   };
 
   const handleClearLogs = async () => {
-    if (!window.confirm("PERINGATAN: Seluruh data log kehadiran di Database akan dihapus permanen. Anda harus menarik ulang data dari mesin setelah ini. Lanjutkan?")) {
-        return;
-    }
+    if (!window.confirm("HAPUS SEMUA DATA? Peringatan: Seluruh log di database akan dikosongkan.")) return;
 
     setIsClearing(true);
     try {
@@ -250,12 +205,12 @@ const SystemConfigView: React.FC<Props> = ({
 
       if (response.ok) {
           if (onSyncAttendance) onSyncAttendance([]);
-          alert("Database berhasil dikosongkan. Silakan tarik data ulang.");
+          alert("Database dikosongkan.");
       } else {
           alert("Gagal mengosongkan database.");
       }
     } catch (err) {
-        alert("Gagal menghubungi server middleware.");
+        alert("Gagal menghubungi middleware.");
     } finally {
         setIsClearing(false);
     }
@@ -279,23 +234,23 @@ const SystemConfigView: React.FC<Props> = ({
              </div>
              <div>
                <h3 className="text-lg font-bold text-slate-800">Koneksi Mesin Fingerprint</h3>
-               <p className="text-xs text-slate-500">Hubungkan aplikasi dengan IP mesin Solution/ZKTeco.</p>
+               <p className="text-xs text-slate-500">Tarik data presensi dari mesin lokal.</p>
              </div>
           </div>
           <div className="p-8 space-y-6 flex-1">
-             <div className="flex items-center gap-4 p-4 bg-slate-50 border border-slate-200 rounded-xl">
-               <div className={`w-10 h-10 rounded-full flex items-center justify-center ${localMachineConfig.status.includes('Online') ? 'bg-emerald-100 text-emerald-600' : 'bg-rose-100 text-rose-600'}`}>
+             <div className={`flex items-center gap-4 p-4 rounded-xl border ${localMachineConfig.status === 'Online' ? 'bg-emerald-50 border-emerald-200' : 'bg-slate-50 border-slate-200'}`}>
+               <div className={`w-10 h-10 rounded-full flex items-center justify-center ${localMachineConfig.status === 'Online' ? 'bg-emerald-100 text-emerald-600' : 'bg-rose-100 text-rose-600'}`}>
                  <Wifi size={20} />
                </div>
                <div className="flex-1">
-                 <p className="text-xs font-bold text-slate-400 uppercase">Status Koneksi</p>
-                 <p className={`text-sm font-bold ${localMachineConfig.status.includes('Online') ? 'text-emerald-600' : 'text-rose-600'}`}>
+                 <p className="text-xs font-bold text-slate-400 uppercase">Status Mesin</p>
+                 <p className={`text-sm font-bold ${localMachineConfig.status === 'Online' ? 'text-emerald-600' : 'text-rose-600'}`}>
                    {localMachineConfig.status}
                  </p>
                </div>
                {localMachineConfig.lastSync && (
                  <div className="text-right">
-                    <p className="text-[10px] text-slate-400">Terakhir Sync</p>
+                    <p className="text-[10px] text-slate-400">Sync Terakhir</p>
                     <p className="text-xs font-mono text-slate-600">{localMachineConfig.lastSync}</p>
                  </div>
                )}
@@ -306,95 +261,86 @@ const SystemConfigView: React.FC<Props> = ({
                      <label className="text-[10px] font-bold text-slate-500 uppercase flex items-center gap-1">
                         <Network size={12} /> IP Address Mesin
                      </label>
-                     <input type="text" placeholder="192.168.1.201" className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-emerald-500 font-mono font-bold text-slate-700" value={localMachineConfig.ipAddress} onChange={(e) => setLocalMachineConfig({...localMachineConfig, ipAddress: e.target.value})} />
+                     <input type="text" className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-mono font-bold" value={localMachineConfig.ipAddress} onChange={(e) => setLocalMachineConfig({...localMachineConfig, ipAddress: e.target.value})} />
                 </div>
 
                 <div className="grid grid-cols-2 gap-4">
                    <div className="space-y-1.5">
-                     <label className="text-[10px] font-bold text-slate-500 uppercase">Port (Default: 4370)</label>
-                     <input type="text" className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-mono" value={localMachineConfig.port} onChange={(e) => setLocalMachineConfig({...localMachineConfig, port: e.target.value})} />
+                     <label className="text-[10px] font-bold text-slate-500 uppercase">Port</label>
+                     <input type="text" className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2 text-sm" value={localMachineConfig.port} onChange={(e) => setLocalMachineConfig({...localMachineConfig, port: e.target.value})} />
                    </div>
                    <div className="space-y-1.5">
                       <label className="text-[10px] font-bold text-slate-500 uppercase">Comm Key</label>
-                      <input type="password" placeholder="0" className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-mono" value={localMachineConfig.commKey} onChange={(e) => setLocalMachineConfig({...localMachineConfig, commKey: e.target.value})} />
+                      <input type="password" className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2 text-sm" value={localMachineConfig.commKey} onChange={(e) => setLocalMachineConfig({...localMachineConfig, commKey: e.target.value})} />
                    </div>
                 </div>
                 
                 <div className="space-y-1.5 pt-4 border-t border-slate-100">
                    <div className="flex justify-between items-center">
-                      <label className="text-[10px] font-bold text-slate-500 uppercase">Alamat Middleware (Backend)</label>
+                      <label className="text-[10px] font-bold text-slate-500 uppercase">Alamat Middleware</label>
                       <button onClick={handleResetMiddlewareUrl} className="text-[9px] font-bold text-indigo-600 flex items-center gap-1">
                          <RotateCcw size={10} /> Reset
                       </button>
                    </div>
-                   <input 
-                     type="text" 
-                     className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2 text-xs font-mono text-slate-600 focus:ring-2 focus:ring-slate-400 outline-none" 
-                     value={middlewareUrl} 
-                     onChange={(e) => {
-                       setMiddlewareUrl(e.target.value);
-                       localStorage.setItem('MW_URL', e.target.value);
-                     }} 
-                   />
-                   <p className="text-[9px] text-slate-400">Gunakan <code>http://127.0.0.1:3006</code> jika server berjalan di komputer ini.</p>
+                   <input type="text" className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2 text-xs font-mono" value={middlewareUrl} onChange={(e) => {setMiddlewareUrl(e.target.value); localStorage.setItem('MW_URL', e.target.value);}} />
+                </div>
+
+                <div className="space-y-1.5 pt-4 border-t border-slate-100">
+                   <label className="text-[10px] font-bold text-indigo-600 uppercase flex items-center gap-1">
+                      <CalendarDays size={12} /> Pilih Tahun Sinkronisasi
+                   </label>
+                   <select 
+                     className="w-full bg-indigo-50 border border-indigo-200 rounded-xl px-4 py-2.5 text-sm font-bold text-indigo-700 outline-none"
+                     value={syncYear}
+                     onChange={(e) => setSyncYear(e.target.value)}
+                   >
+                      <option value="2024">Tahun 2024</option>
+                      <option value="2025">Tahun 2025</option>
+                      <option value="2026">Tahun 2026</option>
+                   </select>
+                   <p className="text-[9px] text-slate-400">Data dari tahun lain akan diabaikan secara otomatis.</p>
                 </div>
              </div>
              
              <div className="grid grid-cols-2 gap-3">
-               <button 
-                  onClick={handleTestConnection}
-                  disabled={isTestingConnection}
-                  className={`py-3 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-all ${isTestingConnection ? 'bg-slate-100 text-slate-400' : 'bg-white border border-slate-300 text-slate-600 hover:bg-slate-50'}`}
-               >
-                 {isTestingConnection ? <RefreshCw size={16} className="animate-spin" /> : <Power size={16} />} 
-                 Tes Koneksi
+               <button onClick={handleTestConnection} disabled={isTestingConnection} className="py-3 bg-white border border-slate-300 text-slate-600 rounded-xl text-xs font-bold flex items-center justify-center gap-2">
+                 {isTestingConnection ? <RefreshCw size={16} className="animate-spin" /> : <Power size={16} />} Tes Koneksi
                </button>
-               <button onClick={handleSaveMachine} className="py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2 shadow-lg shadow-emerald-100">
-                 <Save size={16} /> Simpan
+               <button onClick={handleSaveMachine} className="py-3 bg-emerald-600 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2">
+                 <Save size={16} /> Simpan Config
                </button>
              </div>
 
-             <div className="pt-2 border-t border-slate-100">
-                <button 
-                  onClick={handleSyncLogs}
-                  disabled={isSyncing}
-                  className={`w-full py-3 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-all bg-blue-600 hover:bg-blue-700 text-white shadow-lg`}
-                >
-                  {isSyncing ? <RefreshCw size={16} className="animate-spin" /> : <ArrowDownToLine size={16} />}
-                  {isSyncing ? 'Menarik Data...' : 'Tarik Data Log Sekarang'}
-                </button>
-             </div>
+             <button 
+               onClick={handleSyncLogs}
+               disabled={isSyncing}
+               className="w-full py-4 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-sm font-bold flex items-center justify-center gap-3 shadow-lg"
+             >
+                {isSyncing ? <RefreshCw size={20} className="animate-spin" /> : <ArrowDownToLine size={20} />}
+                {isSyncing ? 'Proses Sinkronisasi...' : `Tarik Data Tahun ${syncYear}`}
+             </button>
 
              {connectionStatus === 'middleware_error' && (
-                <div className="p-4 bg-rose-50 border border-rose-200 rounded-2xl flex gap-3">
-                   <AlertCircle className="text-rose-600 shrink-0" size={20} />
-                   <div className="text-xs text-rose-700">
-                      <strong>Gagal Menghubungi Middleware.</strong>
-                      <p className="mt-1">Coba ganti <code>localhost</code> menjadi <code>127.0.0.1</code> pada kolom Alamat Middleware di atas, lalu Tes Koneksi kembali.</p>
-                   </div>
+                <div className="p-4 bg-rose-50 border border-rose-200 rounded-2xl flex gap-3 text-xs text-rose-700">
+                   <AlertCircle className="shrink-0" size={18} />
+                   <p>Middleware tidak merespon. Pastikan <code>node server.js</code> sudah berjalan di komputer Anda.</p>
                 </div>
              )}
           </div>
           
-          {/* Danger Zone */}
           <div className="p-8 bg-rose-50/50 border-t border-rose-100">
              <div className="flex items-center gap-2 text-rose-600 mb-4">
                 <Skull size={18} />
-                <h4 className="text-sm font-black uppercase tracking-widest">Zona Berbahaya</h4>
+                <h4 className="text-sm font-black uppercase">Zona Berbahaya</h4>
              </div>
-             <button 
-               onClick={handleClearLogs}
-               disabled={isClearing}
-               className="w-full py-2.5 bg-rose-100 hover:bg-rose-200 text-rose-700 rounded-xl text-xs font-bold border border-rose-200 transition-all flex items-center justify-center gap-2"
-             >
+             <button onClick={handleClearLogs} disabled={isClearing} className="w-full py-3 bg-rose-100 hover:bg-rose-200 text-rose-700 rounded-xl text-xs font-bold border border-rose-200 flex items-center justify-center gap-2">
                 {isClearing ? <RefreshCw size={14} className="animate-spin" /> : <Trash2 size={14} />}
-                Kosongkan Database Log Kehadiran
+                Kosongkan Database Log
              </button>
-             <p className="text-[9px] text-rose-400 mt-2 text-center italic">Gunakan fitur ini jika Anda ingin menarik ulang data dari awal.</p>
           </div>
         </div>
 
-        {/* Supabase Config */}
+        {/* Database Config */}
         <div className="bg-white rounded-3xl shadow-sm border border-slate-200 overflow-hidden">
           <div className="p-8 border-b border-slate-100 bg-slate-50/50 flex items-center gap-3">
              <div className="p-2 bg-blue-100 text-blue-600 rounded-lg">
@@ -402,7 +348,7 @@ const SystemConfigView: React.FC<Props> = ({
              </div>
              <div>
                <h3 className="text-lg font-bold text-slate-800">Koneksi Database Cloud</h3>
-               <p className="text-xs text-slate-500">Konfigurasi URL dan Key Supabase.</p>
+               <p className="text-xs text-slate-500">Konfigurasi Supabase.</p>
              </div>
           </div>
           <div className="p-8 space-y-6">
@@ -411,9 +357,9 @@ const SystemConfigView: React.FC<Props> = ({
                  {dbStatus === 'connected' ? <Link size={20} /> : <RefreshCw size={20} className={dbStatus === 'checking' ? 'animate-spin' : ''} />}
                </div>
                <div>
-                 <p className="text-xs font-bold text-slate-400 uppercase">Status Database</p>
+                 <p className="text-xs font-bold text-slate-400 uppercase">Status DB</p>
                  <p className={`text-sm font-bold ${dbStatus === 'connected' ? 'text-emerald-600' : 'text-slate-600'}`}>
-                   {dbStatus === 'connected' ? 'Terhubung' : 'Memeriksa / Terputus'}
+                   {dbStatus === 'connected' ? 'Terhubung' : 'Terputus'}
                  </p>
                </div>
              </div>
@@ -421,7 +367,7 @@ const SystemConfigView: React.FC<Props> = ({
              <form onSubmit={handleSaveDBConfig} className="space-y-4">
                 <div className="space-y-1.5">
                    <label className="text-[10px] font-bold text-slate-500 uppercase">Supabase URL</label>
-                   <input type="text" placeholder="https://xyz.supabase.co" className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-mono" value={dbConfig.url} onChange={(e) => setDbConfig({...dbConfig, url: e.target.value})} />
+                   <input type="text" className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-mono" value={dbConfig.url} onChange={(e) => setDbConfig({...dbConfig, url: e.target.value})} />
                 </div>
                 <div className="space-y-1.5">
                    <label className="text-[10px] font-bold text-slate-500 uppercase">Supabase Anon Key</label>
@@ -432,7 +378,7 @@ const SystemConfigView: React.FC<Props> = ({
                      </button>
                    </div>
                 </div>
-                <button type="submit" className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2 shadow-lg shadow-blue-100">
+                <button type="submit" className="w-full py-3 bg-blue-600 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-2">
                   <Save size={16} /> Update Database
                 </button>
              </form>

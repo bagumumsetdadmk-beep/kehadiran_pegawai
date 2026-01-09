@@ -54,16 +54,16 @@ function checkNetworkConnection(host, port, timeout = 3000) {
 
 // Endpoint untuk menghapus seluruh log
 app.post('/api/clear-logs', async (req, res) => {
-    console.log("[DANGER] Membersihkan seluruh data attendance_logs...");
+    console.log("[DANGER] Request: Membersihkan seluruh data attendance_logs...");
     try {
         const { error } = await supabase
             .from('attendance_logs')
             .delete()
-            .neq('id', 0); // Trik untuk menghapus semua baris (id != 0)
+            .neq('id', 0);
 
         if (error) throw error;
         
-        console.log("[DANGER] Data berhasil dikosongkan.");
+        console.log("[DANGER] Database berhasil dikosongkan.");
         res.status(200).json({ success: true, message: 'Database log berhasil dikosongkan.' });
     } catch (e) {
         console.error("[DANGER] Gagal mengosongkan data:", e.message);
@@ -110,17 +110,19 @@ app.post('/api/test-connection', async (req, res) => {
 });
 
 app.post('/api/sync-logs', async (req, res) => {
-    const { ips, port } = req.body;
+    const { ips, port, targetYear } = req.body;
     let totalLogsFormatted = [];
-    const TARGET_YEAR = 2026;
+    const SYNC_YEAR = parseInt(targetYear) || 2026;
+
+    console.log(`\n[SYNC] Memulai sinkronisasi untuk tahun: ${SYNC_YEAR}`);
 
     if (!isZKLibAvailable) return res.status(500).json({ error: 'Library node-zklib tidak terpasang' });
 
     for (const ip of ips) {
-        console.log(`\n[SYNC-2026] IP: ${ip}`);
+        console.log(`[SYNC] Menghubungi IP: ${ip}...`);
         
         if (!await checkNetworkConnection(ip, port)) {
-            console.log(`[SYNC] ${ip}: Jaringan tidak terjangkau.`);
+            console.log(`[SYNC] ${ip}: Gagal (Jaringan tidak terjangkau).`);
             continue;
         }
 
@@ -142,7 +144,7 @@ app.post('/api/sync-logs', async (req, res) => {
                 rawData = logsFromMachine.data;
             }
 
-            console.log(`[SYNC] ${ip}: Menarik ${rawData.length} total entri dari mesin.`);
+            console.log(`[SYNC] ${ip}: Menarik ${rawData.length} entri dari mesin.`);
 
             const groupedLogs = {};
             let ignoredCount = 0;
@@ -154,7 +156,8 @@ app.post('/api/sync-logs', async (req, res) => {
                 const logTime = new Date(recordTime);
                 if (isNaN(logTime.getTime())) return;
 
-                if (logTime.getFullYear() !== TARGET_YEAR) {
+                // FILTER TAHUN DINAMIS
+                if (logTime.getFullYear() !== SYNC_YEAR) {
                     ignoredCount++;
                     return;
                 }
@@ -187,7 +190,7 @@ app.post('/api/sync-logs', async (req, res) => {
             });
 
             const processed = Object.values(groupedLogs);
-            console.log(`[SYNC] Filter Tahun ${TARGET_YEAR}: ${processed.length} data diproses, ${ignoredCount} data tahun lain diabaikan.`);
+            console.log(`[SYNC] Filter Tahun ${SYNC_YEAR}: ${processed.length} data diproses, ${ignoredCount} data tahun lain diabaikan.`);
 
             for (const log of processed) {
                 const { data: existing } = await supabase
@@ -218,7 +221,7 @@ app.post('/api/sync-logs', async (req, res) => {
                         fingerprintIn: payload.check_in,
                         shiftOut: '17:00',
                         fingerprintOut: payload.check_out,
-                        remarks: 'Data Tahun 2026',
+                        remarks: `Sync Tahun ${SYNC_YEAR}`,
                         isLate: payload.check_in ? payload.check_in > '08:05' : false
                     });
                 }
@@ -234,6 +237,6 @@ app.post('/api/sync-logs', async (req, res) => {
 });
 
 app.listen(PORT, '0.0.0.0', () => {
-    console.log(`\n[READY] Middleware Filter Tahun 2026 di Port ${PORT}`);
+    console.log(`\n[READY] Middleware Absensi Berjalan di Port ${PORT}`);
     console.log(`-----------------------------------------------`);
 });
