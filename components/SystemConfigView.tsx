@@ -31,7 +31,8 @@ import {
   Eye, 
   EyeOff,
   Network,
-  AlertCircle
+  AlertCircle,
+  Skull
 } from 'lucide-react';
 import { AttendanceRecord, Employee, Holiday, WorkSchedule, FingerprintMachine, OrganizationProfile } from '../types';
 import { exportAllEmployeesMonthlyAttendanceExcel, exportAttendanceToExcel } from '../utils/exportUtils';
@@ -106,6 +107,7 @@ const SystemConfigView: React.FC<Props> = ({
   
   const [isTestingConnection, setIsTestingConnection] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [isClearing, setIsClearing] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState<'idle' | 'success' | 'failed' | 'middleware_error' | 'success_simulation'>('idle'); 
   const [testDetails, setTestDetails] = useState<any[]>([]);
 
@@ -233,6 +235,32 @@ const SystemConfigView: React.FC<Props> = ({
     }
   };
 
+  const handleClearLogs = async () => {
+    if (!window.confirm("PERINGATAN: Seluruh data log kehadiran di Database akan dihapus permanen. Anda harus menarik ulang data dari mesin setelah ini. Lanjutkan?")) {
+        return;
+    }
+
+    setIsClearing(true);
+    try {
+      const baseUrl = middlewareUrl.trim().replace(/\/$/, '');
+      const response = await fetch(`${baseUrl}/api/clear-logs`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+
+      if (response.ok) {
+          if (onSyncAttendance) onSyncAttendance([]);
+          alert("Database berhasil dikosongkan. Silakan tarik data ulang.");
+      } else {
+          alert("Gagal mengosongkan database.");
+      }
+    } catch (err) {
+        alert("Gagal menghubungi server middleware.");
+    } finally {
+        setIsClearing(false);
+    }
+  };
+
   const handleResetMiddlewareUrl = () => {
       const defaultUrl = `http://127.0.0.1:3006`;
       setMiddlewareUrl(defaultUrl);
@@ -244,7 +272,7 @@ const SystemConfigView: React.FC<Props> = ({
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
         
         {/* Mesin Fingerprint */}
-        <div className="bg-white rounded-3xl shadow-sm border border-slate-200 overflow-hidden">
+        <div className="bg-white rounded-3xl shadow-sm border border-slate-200 overflow-hidden flex flex-col">
           <div className="p-8 border-b border-slate-100 bg-slate-50/50 flex items-center gap-3">
              <div className="p-2 bg-emerald-100 text-emerald-600 rounded-lg">
                 <Server size={20} />
@@ -254,7 +282,7 @@ const SystemConfigView: React.FC<Props> = ({
                <p className="text-xs text-slate-500">Hubungkan aplikasi dengan IP mesin Solution/ZKTeco.</p>
              </div>
           </div>
-          <div className="p-8 space-y-6">
+          <div className="p-8 space-y-6 flex-1">
              <div className="flex items-center gap-4 p-4 bg-slate-50 border border-slate-200 rounded-xl">
                <div className={`w-10 h-10 rounded-full flex items-center justify-center ${localMachineConfig.status.includes('Online') ? 'bg-emerald-100 text-emerald-600' : 'bg-rose-100 text-rose-600'}`}>
                  <Wifi size={20} />
@@ -346,6 +374,23 @@ const SystemConfigView: React.FC<Props> = ({
                    </div>
                 </div>
              )}
+          </div>
+          
+          {/* Danger Zone */}
+          <div className="p-8 bg-rose-50/50 border-t border-rose-100">
+             <div className="flex items-center gap-2 text-rose-600 mb-4">
+                <Skull size={18} />
+                <h4 className="text-sm font-black uppercase tracking-widest">Zona Berbahaya</h4>
+             </div>
+             <button 
+               onClick={handleClearLogs}
+               disabled={isClearing}
+               className="w-full py-2.5 bg-rose-100 hover:bg-rose-200 text-rose-700 rounded-xl text-xs font-bold border border-rose-200 transition-all flex items-center justify-center gap-2"
+             >
+                {isClearing ? <RefreshCw size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                Kosongkan Database Log Kehadiran
+             </button>
+             <p className="text-[9px] text-rose-400 mt-2 text-center italic">Gunakan fitur ini jika Anda ingin menarik ulang data dari awal.</p>
           </div>
         </div>
 

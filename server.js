@@ -52,6 +52,25 @@ function checkNetworkConnection(host, port, timeout = 3000) {
     });
 }
 
+// Endpoint untuk menghapus seluruh log
+app.post('/api/clear-logs', async (req, res) => {
+    console.log("[DANGER] Membersihkan seluruh data attendance_logs...");
+    try {
+        const { error } = await supabase
+            .from('attendance_logs')
+            .delete()
+            .neq('id', 0); // Trik untuk menghapus semua baris (id != 0)
+
+        if (error) throw error;
+        
+        console.log("[DANGER] Data berhasil dikosongkan.");
+        res.status(200).json({ success: true, message: 'Database log berhasil dikosongkan.' });
+    } catch (e) {
+        console.error("[DANGER] Gagal mengosongkan data:", e.message);
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
 app.post('/api/test-connection', async (req, res) => {
     const { ips, port } = req.body;
     const logs = [];
@@ -73,15 +92,10 @@ app.post('/api/test-connection', async (req, res) => {
             const zk = new ZKLib(ip, port, 10000, 4000);
             try {
                 await zk.createSocket();
-                
-                // Ambil info dasar dengan aman
                 let info = "Koneksi OK";
                 if (typeof zk.getTime === 'function') {
                     try { info = `Waktu: ${await zk.getTime()}`; } catch(e) {}
-                } else if (typeof zk.getUsers === 'function') {
-                    try { const u = await zk.getUsers(); info = `${u.length} User Terdeteksi`; } catch(e) {}
                 }
-
                 logs.push({ ip, status: `Online (${info})` });
                 overallSuccess = true;
                 await zk.disconnect();
@@ -98,55 +112,52 @@ app.post('/api/test-connection', async (req, res) => {
 app.post('/api/sync-logs', async (req, res) => {
     const { ips, port } = req.body;
     let totalLogsFormatted = [];
+    const TARGET_YEAR = 2026;
 
-    if (!isZKLibAvailable) return res.status(500).json({ error: 'Library node-zklib tidak terpasang di server' });
+    if (!isZKLibAvailable) return res.status(500).json({ error: 'Library node-zklib tidak terpasang' });
 
     for (const ip of ips) {
-        console.log(`\n[SYNC-START] IP: ${ip}`);
+        console.log(`\n[SYNC-2026] IP: ${ip}`);
         
         if (!await checkNetworkConnection(ip, port)) {
             console.log(`[SYNC] ${ip}: Jaringan tidak terjangkau.`);
             continue;
         }
 
-        const zk = new ZKLib(ip, port, 20000, 5000);
+        const zk = new ZKLib(ip, port, 30000, 5000);
         try {
             await zk.createSocket();
             
-            // Mencoba beberapa metode penarikan log (beberapa versi library berbeda nama)
             let logsFromMachine = null;
             if (typeof zk.getAttendances === 'function') {
-                console.log(`[SYNC] Menjalankan getAttendances()...`);
                 logsFromMachine = await zk.getAttendances();
             } else if (typeof zk.getAttendance === 'function') {
-                console.log(`[SYNC] Menjalankan getAttendance()...`);
                 logsFromMachine = await zk.getAttendance();
             }
 
-            console.log(`[DEBUG] Raw Result Tipe:`, typeof logsFromMachine);
-            
-            // Penanganan khusus jika data dibungkus dalam properti 'data'
-            let finalData = [];
+            let rawData = [];
             if (logsFromMachine && Array.isArray(logsFromMachine)) {
-                finalData = logsFromMachine;
+                rawData = logsFromMachine;
             } else if (logsFromMachine && logsFromMachine.data && Array.isArray(logsFromMachine.data)) {
-                finalData = logsFromMachine.data;
+                rawData = logsFromMachine.data;
             }
 
-            console.log(`[SYNC] ${ip}: Menemukan ${finalData.length} entri.`);
-
-            if (finalData.length === 0) {
-                console.log(`[SYNC] ${ip}: Data log kosong.`);
-                continue;
-            }
+            console.log(`[SYNC] ${ip}: Menarik ${rawData.length} total entri dari mesin.`);
 
             const groupedLogs = {};
-            finalData.forEach(log => {
+            let ignoredCount = 0;
+
+            rawData.forEach(log => {
                 const recordTime = log.recordTime || log.timestamp;
                 if (!recordTime) return;
 
                 const logTime = new Date(recordTime);
                 if (isNaN(logTime.getTime())) return;
+
+                if (logTime.getFullYear() !== TARGET_YEAR) {
+                    ignoredCount++;
+                    return;
+                }
 
                 const dateStr = logTime.toISOString().split('T')[0];
                 const timeStr = logTime.toTimeString().split(' ')[0].substring(0, 5);
@@ -176,7 +187,7 @@ app.post('/api/sync-logs', async (req, res) => {
             });
 
             const processed = Object.values(groupedLogs);
-            console.log(`[SYNC] Mengirim ${processed.length} data ke Supabase...`);
+            console.log(`[SYNC] Filter Tahun ${TARGET_YEAR}: ${processed.length} data diproses, ${ignoredCount} data tahun lain diabaikan.`);
 
             for (const log of processed) {
                 const { data: existing } = await supabase
@@ -207,7 +218,7 @@ app.post('/api/sync-logs', async (req, res) => {
                         fingerprintIn: payload.check_in,
                         shiftOut: '17:00',
                         fingerprintOut: payload.check_out,
-                        remarks: 'Data Solution X100',
+                        remarks: 'Data Tahun 2026',
                         isLate: payload.check_in ? payload.check_in > '08:05' : false
                     });
                 }
@@ -223,6 +234,6 @@ app.post('/api/sync-logs', async (req, res) => {
 });
 
 app.listen(PORT, '0.0.0.0', () => {
-    console.log(`\n[READY] Middleware Solution X100 di Port ${PORT}`);
+    console.log(`\n[READY] Middleware Filter Tahun 2026 di Port ${PORT}`);
     console.log(`-----------------------------------------------`);
 });
